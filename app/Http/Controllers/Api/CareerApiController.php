@@ -258,17 +258,56 @@ class CareerApiController extends Controller
             }
         }
 
+        // Read expanded fields
+        $tempatLahir        = $request->tempat_lahir ?? '';
+        $tanggalLahir       = $request->tanggal_lahir ?? '';
+        $alamatDomisili     = $request->alamat_domisili ?? '';
+        $pendidikanTerakhir = $request->pendidikan_terakhir ?? '';
+        $namaLembaga        = $request->nama_lembaga ?? '';
+        $sertifikasi        = $request->sertifikasi ?? '';
+        $pengalamanTerakhir = $request->pengalaman_terakhir ?? '';
+        $jabatanTerakhir    = $request->jabatan_terakhir ?? '';
+        $masaKerja          = $request->masa_kerja ?? '';
+        $rekomendasi        = $request->rekomendasi ?? '';
+
         // Generate absolute API download URL for the email body (/api/careers/cv/{filename})
         $cvDownloadUrl = null;
         if ($savedFilename) {
             $cvDownloadUrl = url('/api/careers/cv/' . $savedFilename);
         }
 
+        // Send to Google Sheets Webhook if configured
+        $webhookUrl = env('GOOGLE_SHEETS_WEBHOOK_URL');
+        if (!empty($webhookUrl)) {
+            try {
+                \Illuminate\Support\Facades\Http::withoutVerifying()->timeout(10)->post($webhookUrl, [
+                    'tanggal_masuk'       => now()->format('d/m/Y H:i'),
+                    'nama'                => $request->name,
+                    'umur'                => $request->umur ?? '',
+                    'tempat_lahir'        => $tempatLahir,
+                    'tanggal_lahir'       => $tanggalLahir,
+                    'nomor_hp'            => $request->phone ?? '',
+                    'alamat_domisili'     => $alamatDomisili,
+                    'pendidikan_terakhir' => $pendidikanTerakhir,
+                    'nama_lembaga'        => $namaLembaga,
+                    'sertifikasi'         => $sertifikasi,
+                    'pengalaman_terakhir' => $pengalamanTerakhir,
+                    'jabatan_terakhir'    => $jabatanTerakhir,
+                    'masa_kerja'          => $masaKerja,
+                    'jabatan_dilamar'     => $careerTitle,
+                    'rekomendasi'         => $rekomendasi,
+                    'cv_url'              => $cvDownloadUrl ?? '',
+                ]);
+            } catch (\Throwable $e) {
+                Log::warning('Google Sheets Webhook error: ' . $e->getMessage());
+            }
+        }
+
         // Store application in database (safe try-catch)
         $application = null;
         try {
             if (Schema::hasTable('career_applications')) {
-                $application = CareerApplication::create([
+                $applicationData = [
                     'career_id'    => is_numeric($request->career_id) ? (int)$request->career_id : null,
                     'career_title' => $careerTitle,
                     'name'         => $request->name,
@@ -276,7 +315,29 @@ class CareerApiController extends Controller
                     'phone'        => $request->phone,
                     'cover_letter' => $request->cover_letter,
                     'cv_path'      => $cvPath,
-                ]);
+                ];
+
+                // Dynamically append new columns if present in DB schema
+                $columns = Schema::getColumnListing('career_applications');
+                $extraData = [
+                    'tempat_lahir'        => $tempatLahir,
+                    'tanggal_lahir'       => $tanggalLahir,
+                    'alamat_domisili'     => $alamatDomisili,
+                    'pendidikan_terakhir' => $pendidikanTerakhir,
+                    'nama_lembaga'        => $namaLembaga,
+                    'sertifikasi'         => $sertifikasi,
+                    'pengalaman_terakhir' => $pengalamanTerakhir,
+                    'jabatan_terakhir'    => $jabatanTerakhir,
+                    'masa_kerja'          => $masaKerja,
+                    'rekomendasi'         => $rekomendasi,
+                ];
+                foreach ($extraData as $col => $val) {
+                    if (in_array($col, $columns)) {
+                        $applicationData[$col] = $val;
+                    }
+                }
+
+                $application = CareerApplication::create($applicationData);
             }
         } catch (\Throwable $e) {
             Log::warning('Career application DB store warning: ' . $e->getMessage());
@@ -298,7 +359,7 @@ class CareerApiController extends Controller
             : "Tidak ada";
 
         $bodyText = "Lamaran Kerja Baru — PT. Karya Kembar Bersama\n\n"
-                  . "Posisi: {$careerTitle}\n"
+                  . "Posisi Dilamar: {$careerTitle}\n"
                   . "Departemen: {$careerDept}\n"
                   . "Lokasi: {$careerLocation}\n\n"
                   . "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -306,12 +367,20 @@ class CareerApiController extends Controller
                   . "• Nama: {$request->name}\n"
                   . "• Email: {$request->email}\n"
                   . "• Telepon: " . ($request->phone ?: '-') . "\n"
+                  . "• TTL: " . ($tempatLahir ? "{$tempatLahir}, " : "") . ($tanggalLahir ?: '-') . "\n"
+                  . "• Alamat Domisili: " . ($alamatDomisili ?: '-') . "\n"
+                  . "• Pendidikan Terakhir: " . ($pendidikanTerakhir ?: '-') . " (" . ($namaLembaga ?: '-') . ")\n"
+                  . "• Sertifikasi: " . ($sertifikasi ?: '-') . "\n"
+                  . "• Pengalaman Terakhir: " . ($pengalamanTerakhir ?: '-') . "\n"
+                  . "• Jabatan Terakhir: " . ($jabatanTerakhir ?: '-') . "\n"
+                  . "• Masa Kerja: " . ($masaKerja ?: '-') . "\n"
+                  . "• Rekomendasi/Referensi: " . ($rekomendasi ?: '-') . "\n"
                   . "• Lampiran CV: {$cvInfoText}\n\n"
-                  . "Surat Lamaran:\n" . ($request->cover_letter ?: '-') . "\n\n"
+                  . "Surat Lamaran / Catatan:\n" . ($request->cover_letter ?: '-') . "\n\n"
                   . "---\nDikirim dari Form Karir https://www.ptk2b.com/karir pada " . now()->format('d M Y H:i:s T');
 
         $bodyHtml = "<h3>Lamaran Kerja Baru — PT. Karya Kembar Bersama</h3>"
-                  . "<p><b>Posisi:</b> {$careerTitle}<br>"
+                  . "<p><b>Posisi Dilamar:</b> {$careerTitle}<br>"
                   . "<b>Departemen:</b> {$careerDept}<br>"
                   . "<b>Lokasi:</b> {$careerLocation}</p>"
                   . "<hr style=\"border:0;border-top:1px solid #ccc;margin:15px 0;\">"
@@ -320,9 +389,17 @@ class CareerApiController extends Controller
                   . "<li><b>Nama:</b> {$request->name}</li>"
                   . "<li><b>Email:</b> {$request->email}</li>"
                   . "<li><b>Telepon:</b> " . ($request->phone ?: '-') . "</li>"
+                  . "<li><b>TTL:</b> " . ($tempatLahir ? "{$tempatLahir}, " : "") . ($tanggalLahir ?: '-') . "</li>"
+                  . "<li><b>Alamat Domisili:</b> " . ($alamatDomisili ?: '-') . "</li>"
+                  . "<li><b>Pendidikan:</b> " . ($pendidikanTerakhir ?: '-') . " (" . ($namaLembaga ?: '-') . ")</li>"
+                  . "<li><b>Sertifikasi:</b> " . ($sertifikasi ?: '-') . "</li>"
+                  . "<li><b>Pengalaman Kerja Terakhir:</b> " . ($pengalamanTerakhir ?: '-') . "</li>"
+                  . "<li><b>Jabatan Terakhir:</b> " . ($jabatanTerakhir ?: '-') . "</li>"
+                  . "<li><b>Masa Kerja:</b> " . ($masaKerja ?: '-') . "</li>"
+                  . "<li><b>Rekomendasi / Referensi:</b> " . ($rekomendasi ?: '-') . "</li>"
                   . "<li><b>Lampiran CV:</b> {$cvInfoHtml}</li>"
                   . "</ul>"
-                  . "<h4>Surat Lamaran:</h4>"
+                  . "<h4>Surat Lamaran / Catatan:</h4>"
                   . "<blockquote style=\"background:#f9f9f9;padding:10px;border-left:4px solid #1B3A6B;\">" . nl2br(e($request->cover_letter ?: '-')) . "</blockquote>"
                   . "<hr style=\"border:0;border-top:1px solid #eee;\">"
                   . "<p style=\"font-size:12px;color:#777;\">Dikirim dari Form Karir <a href=\"https://www.ptk2b.com/karir\">https://www.ptk2b.com/karir</a> pada " . now()->format('d M Y H:i:s T') . "</p>";
