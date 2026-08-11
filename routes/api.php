@@ -12,6 +12,7 @@ Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
 Route::get('/careers', [CareerApiController::class, 'index']);
+Route::post('/contact-message', [SiteContentApiController::class, 'sendContactMessage']);
 
 // ===== AUTH =====
 Route::post('/login', [AuthController::class, 'login']);

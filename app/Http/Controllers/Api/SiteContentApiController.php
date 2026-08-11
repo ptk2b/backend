@@ -71,4 +71,42 @@ class SiteContentApiController extends Controller
 
         return response()->json(['message' => "Konten section '{$section}' berhasil diperbarui."]);
     }
+
+    /**
+     * Send contact message from website form to info@ptk2b.com.
+     * POST /api/contact-message
+     */
+    public function sendContactMessage(Request $request): JsonResponse
+    {
+        $request->validate([
+            'name'    => 'required|string|max:255',
+            'email'   => 'required|email|max:255',
+            'company' => 'nullable|string|max:255',
+            'message' => 'required|string',
+        ]);
+
+        $destinationEmail = env('CONTACT_FORM_RECIPIENT', 'info@ptk2b.com');
+
+        $body = "Pesan baru dari Form Kontak Website PT. Karya Kembar Bersama:\n\n"
+              . "• Nama: {$request->name}\n"
+              . "• Email Pengirim: {$request->email}\n"
+              . "• Perusahaan: " . ($request->company ?: '-') . "\n\n"
+              . "Pesan:\n{$request->message}\n\n"
+              . "---\nDikirim dari Form Kontak https://www.ptk2b.com pada " . now()->format('d M Y H:i:s T');
+
+        try {
+            \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request) {
+                $mail->to($destinationEmail)
+                     ->replyTo($request->email, $request->name)
+                     ->subject("Pesan Kontak Website dari {$request->name}");
+            });
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Contact form email failed: ' . $e->getMessage());
+        }
+
+        return response()->json([
+            'status'  => 'success',
+            'message' => "Pesan Anda berhasil dikirim ke {$destinationEmail}.",
+        ]);
+    }
 }
