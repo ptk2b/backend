@@ -7,34 +7,46 @@ use App\Models\Career;
 use App\Models\CareerApplication;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Log;
 
 class CareerApiController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Career::query();
+        try {
+            $query = Career::query();
 
-        // Public: only show active careers
-        if (! $request->user()) {
-            $query->active();
+            // Public: only show active careers
+            if (! $request->user()) {
+                $query->active();
+            }
+
+            $careers = $query->orderBy('is_urgent', 'desc')
+                ->orderBy('created_at', 'desc')
+                ->get();
+
+            return response()->json($careers);
+        } catch (\Throwable $e) {
+            Log::error('Career index error: ' . $e->getMessage());
+            return response()->json([]);
         }
-
-        $careers = $query->orderBy('is_urgent', 'desc')
-            ->orderBy('created_at', 'desc')
-            ->get();
-
-        return response()->json($careers);
     }
 
     public function show(int $id): JsonResponse
     {
-        $career = Career::active()->find($id);
+        try {
+            $career = Career::active()->find($id);
 
-        if (! $career) {
+            if (! $career) {
+                return response()->json(['message' => 'Lowongan tidak ditemukan'], 404);
+            }
+
+            return response()->json($career);
+        } catch (\Throwable $e) {
+            Log::error('Career show error: ' . $e->getMessage());
             return response()->json(['message' => 'Lowongan tidak ditemukan'], 404);
         }
-
-        return response()->json($career);
     }
 
     public function store(Request $request): JsonResponse
@@ -50,10 +62,26 @@ class CareerApiController extends Controller
             'is_urgent'    => 'boolean',
         ]);
 
-        $career = Career::create($request->only([
+        $payload = $request->only([
             'title', 'department', 'location', 'type',
             'description', 'requirements', 'closed_date', 'is_urgent',
-        ]));
+        ]);
+
+        if (array_key_exists('closed_date', $payload) && empty($payload['closed_date'])) {
+            $payload['closed_date'] = null;
+        }
+
+        // Dynamically filter payload to columns that exist in the database table
+        try {
+            if (Schema::hasTable('careers')) {
+                $columns = Schema::getColumnListing('careers');
+                $payload = array_intersect_key($payload, array_flip($columns));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Schema listing warning: ' . $e->getMessage());
+        }
+
+        $career = Career::create($payload);
 
         return response()->json([
             'message' => 'Lowongan berhasil ditambahkan.',
@@ -77,11 +105,27 @@ class CareerApiController extends Controller
             'is_active'    => 'sometimes|boolean',
         ]);
 
-        $career->update($request->only([
+        $payload = $request->only([
             'title', 'department', 'location', 'type',
             'description', 'requirements', 'closed_date',
             'is_urgent', 'is_active',
-        ]));
+        ]);
+
+        if (array_key_exists('closed_date', $payload) && empty($payload['closed_date'])) {
+            $payload['closed_date'] = null;
+        }
+
+        // Dynamically filter payload to columns that exist in the database table
+        try {
+            if (Schema::hasTable('careers')) {
+                $columns = Schema::getColumnListing('careers');
+                $payload = array_intersect_key($payload, array_flip($columns));
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Schema listing warning: ' . $e->getMessage());
+        }
+
+        $career->update($payload);
 
         return response()->json([
             'message' => 'Lowongan berhasil diperbarui.',
@@ -119,11 +163,15 @@ class CareerApiController extends Controller
         $careerLocation = '-';
 
         if ($request->filled('career_id')) {
-            $career = Career::find($request->career_id);
-            if ($career) {
-                $careerTitle = $career->title;
-                $careerDept = $career->department;
-                $careerLocation = $career->location;
+            try {
+                $career = Career::find($request->career_id);
+                if ($career) {
+                    $careerTitle = $career->title;
+                    $careerDept = $career->department;
+                    $careerLocation = $career->location;
+                }
+            } catch (\Throwable $e) {
+                Log::warning('Career find error in apply: ' . $e->getMessage());
             }
         }
 
@@ -132,33 +180,39 @@ class CareerApiController extends Controller
         $originalFilename = null;
 
         if ($request->hasFile('cv_file')) {
-            $file = $request->file('cv_file');
-            $originalFilename = $file->getClientOriginalName();
-            $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalFilename);
+            try {
+                $file = $request->file('cv_file');
+                $originalFilename = $file->getClientOriginalName();
+                $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalFilename);
 
-            $uploadDir = public_path('uploads/cvs');
-            if (! file_exists($uploadDir)) {
-                mkdir($uploadDir, 0755, true);
+                $uploadDir = public_path('uploads/cvs');
+                if (! file_exists($uploadDir)) {
+                    mkdir($uploadDir, 0755, true);
+                }
+
+                $file->move($uploadDir, $filename);
+                $cvPath = 'uploads/cvs/' . $filename;
+            } catch (\Throwable $e) {
+                Log::error('CV file upload error: ' . $e->getMessage());
             }
-
-            $file->move($uploadDir, $filename);
-            $cvPath = 'uploads/cvs/' . $filename;
         }
 
         // Store application in database (safe try-catch)
         $application = null;
         try {
-            $application = CareerApplication::create([
-                'career_id'    => is_numeric($request->career_id) ? (int)$request->career_id : null,
-                'career_title' => $careerTitle,
-                'name'         => $request->name,
-                'email'        => $request->email,
-                'phone'        => $request->phone,
-                'cover_letter' => $request->cover_letter,
-                'cv_path'      => $cvPath,
-            ]);
+            if (Schema::hasTable('career_applications')) {
+                $application = CareerApplication::create([
+                    'career_id'    => is_numeric($request->career_id) ? (int)$request->career_id : null,
+                    'career_title' => $careerTitle,
+                    'name'         => $request->name,
+                    'email'        => $request->email,
+                    'phone'        => $request->phone,
+                    'cover_letter' => $request->cover_letter,
+                    'cv_path'      => $cvPath,
+                ]);
+            }
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Career application DB store warning: ' . $e->getMessage());
+            Log::warning('Career application DB store warning: ' . $e->getMessage());
         }
 
         // Send email notification to info@ptk2b.com
@@ -203,7 +257,7 @@ class CareerApiController extends Controller
 
                 $mailer->send($emailMessage);
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('Career apply EsmtpTransport delivery error: ' . $e->getMessage());
+                Log::warning('Career apply EsmtpTransport delivery error: ' . $e->getMessage());
 
                 try {
                     \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request, $careerTitle, $mailUsername, $fullCvPath, $originalFilename) {
@@ -217,7 +271,7 @@ class CareerApiController extends Controller
                         }
                     });
                 } catch (\Throwable $e2) {
-                    \Illuminate\Support\Facades\Log::warning('Career apply Mail facade error: ' . $e2->getMessage());
+                    Log::warning('Career apply Mail facade error: ' . $e2->getMessage());
 
                     try {
                         $headers = "From: PT. Karya Kembar Bersama <{$mailUsername}>\r\n" .
@@ -226,7 +280,7 @@ class CareerApiController extends Controller
                                    "Content-Type: text/plain; charset=UTF-8\r\n";
                         @mail($destinationEmail, "Lamaran Kerja: {$careerTitle} — dari {$request->name}", $body, $headers);
                     } catch (\Throwable $e3) {
-                        \Illuminate\Support\Facades\Log::warning('Career apply native mail error: ' . $e3->getMessage());
+                        Log::warning('Career apply native mail error: ' . $e3->getMessage());
                     }
                 }
             }
