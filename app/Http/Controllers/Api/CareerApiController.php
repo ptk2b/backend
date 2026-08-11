@@ -197,6 +197,33 @@ class CareerApiController extends Controller
             }
         }
 
+        // Find actual file path on disk across server environment variations
+        $actualCvFile = null;
+        if ($cvPath) {
+            $candidates = [
+                public_path($cvPath),
+                base_path('public/' . $cvPath),
+                base_path('../public_html/' . $cvPath),
+                storage_path('app/public/' . $cvPath),
+                base_path($cvPath),
+            ];
+            foreach ($candidates as $candidate) {
+                if ($candidate && file_exists($candidate)) {
+                    $actualCvFile = $candidate;
+                    break;
+                }
+            }
+        }
+
+        // Generate absolute download URL for the email body
+        $cvDownloadUrl = null;
+        if ($cvPath) {
+            $appUrl = env('APP_URL', 'https://www.ptk2b.com');
+            // If APP_URL contains /api, strip it
+            $appUrl = preg_replace('/\/api\/?$/', '', $appUrl);
+            $cvDownloadUrl = rtrim($appUrl, '/') . '/' . ltrim($cvPath, '/');
+        }
+
         // Store application in database (safe try-catch)
         $application = null;
         try {
@@ -222,20 +249,43 @@ class CareerApiController extends Controller
         $mailUsername      = env('MAIL_USERNAME', 'info@ptk2b.com');
         $mailPassword      = env('MAIL_PASSWORD');
 
-        $body = "Lamaran Kerja Baru — PT. Karya Kembar Bersama\n\n"
-              . "Posisi: {$careerTitle}\n"
-              . "Departemen: {$careerDept}\n"
-              . "Lokasi: {$careerLocation}\n\n"
-              . "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-              . "Data Pelamar:\n"
-              . "• Nama: {$request->name}\n"
-              . "• Email: {$request->email}\n"
-              . "• Telepon: " . ($request->phone ?: '-') . "\n"
-              . "• Lampiran CV: " . ($originalFilename ? "Ada ({$originalFilename})" : "Tidak ada") . "\n\n"
-              . "Surat Lamaran:\n" . ($request->cover_letter ?: '-') . "\n\n"
-              . "---\nDikirim dari Form Karir https://www.ptk2b.com/karir pada " . now()->format('d M Y H:i:s T');
+        $cvInfoText = $originalFilename
+            ? "Ada ({$originalFilename})" . ($cvDownloadUrl ? "\n  » Direct Link Download CV: {$cvDownloadUrl}" : "")
+            : "Tidak ada";
 
-        $fullCvPath = $cvPath ? public_path($cvPath) : null;
+        $cvInfoHtml = $originalFilename
+            ? "Ada (<b>{$originalFilename}</b>)" . ($cvDownloadUrl ? "<br>📥 <b>Link Direct Download:</b> <a href=\"{$cvDownloadUrl}\" target=\"_blank\" style=\"color:#1B3A6B;font-weight:bold;text-decoration:underline;\">{$cvDownloadUrl}</a>" : "")
+            : "Tidak ada";
+
+        $bodyText = "Lamaran Kerja Baru — PT. Karya Kembar Bersama\n\n"
+                  . "Posisi: {$careerTitle}\n"
+                  . "Departemen: {$careerDept}\n"
+                  . "Lokasi: {$careerLocation}\n\n"
+                  . "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                  . "Data Pelamar:\n"
+                  . "• Nama: {$request->name}\n"
+                  . "• Email: {$request->email}\n"
+                  . "• Telepon: " . ($request->phone ?: '-') . "\n"
+                  . "• Lampiran CV: {$cvInfoText}\n\n"
+                  . "Surat Lamaran:\n" . ($request->cover_letter ?: '-') . "\n\n"
+                  . "---\nDikirim dari Form Karir https://www.ptk2b.com/karir pada " . now()->format('d M Y H:i:s T');
+
+        $bodyHtml = "<h3>Lamaran Kerja Baru — PT. Karya Kembar Bersama</h3>"
+                  . "<p><b>Posisi:</b> {$careerTitle}<br>"
+                  . "<b>Departemen:</b> {$careerDept}<br>"
+                  . "<b>Lokasi:</b> {$careerLocation}</p>"
+                  . "<hr style=\"border:0;border-top:1px solid #ccc;margin:15px 0;\">"
+                  . "<h4>Data Pelamar:</h4>"
+                  . "<ul>"
+                  . "<li><b>Nama:</b> {$request->name}</li>"
+                  . "<li><b>Email:</b> {$request->email}</li>"
+                  . "<li><b>Telepon:</b> " . ($request->phone ?: '-') . "</li>"
+                  . "<li><b>Lampiran CV:</b> {$cvInfoHtml}</li>"
+                  . "</ul>"
+                  . "<h4>Surat Lamaran:</h4>"
+                  . "<blockquote style=\"background:#f9f9f9;padding:10px;border-left:4px solid #1B3A6B;\">" . nl2br(e($request->cover_letter ?: '-')) . "</blockquote>"
+                  . "<hr style=\"border:0;border-top:1px solid #eee;\">"
+                  . "<p style=\"font-size:12px;color:#777;\">Dikirim dari Form Karir <a href=\"https://www.ptk2b.com/karir\">https://www.ptk2b.com/karir</a> pada " . now()->format('d M Y H:i:s T') . "</p>";
 
         if (!empty($mailPassword)) {
             try {
@@ -249,10 +299,11 @@ class CareerApiController extends Controller
                     ->to($destinationEmail)
                     ->replyTo("\"{$request->name}\" <{$request->email}>")
                     ->subject("Lamaran Kerja: {$careerTitle} — dari {$request->name}")
-                    ->html(nl2br(e($body)));
+                    ->html($bodyHtml)
+                    ->text($bodyText);
 
-                if ($fullCvPath && file_exists($fullCvPath)) {
-                    $emailMessage->attachFromPath($fullCvPath, $originalFilename, 'application/pdf');
+                if ($actualCvFile && file_exists($actualCvFile)) {
+                    $emailMessage->attachFromPath($actualCvFile, $originalFilename ?? 'CV.pdf', 'application/pdf');
                 }
 
                 $mailer->send($emailMessage);
@@ -260,14 +311,14 @@ class CareerApiController extends Controller
                 Log::warning('Career apply EsmtpTransport delivery error: ' . $e->getMessage());
 
                 try {
-                    \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request, $careerTitle, $mailUsername, $fullCvPath, $originalFilename) {
+                    \Illuminate\Support\Facades\Mail::html($bodyHtml, function ($mail) use ($destinationEmail, $request, $careerTitle, $mailUsername, $actualCvFile, $originalFilename) {
                         $mail->from($mailUsername, 'PT. Karya Kembar Bersama')
                              ->to($destinationEmail)
                              ->replyTo($request->email, $request->name)
                              ->subject("Lamaran Kerja: {$careerTitle} — dari {$request->name}");
 
-                        if ($fullCvPath && file_exists($fullCvPath)) {
-                            $mail->attach($fullCvPath, ['as' => $originalFilename, 'mime' => 'application/pdf']);
+                        if ($actualCvFile && file_exists($actualCvFile)) {
+                            $mail->attach($actualCvFile, ['as' => $originalFilename ?? 'CV.pdf', 'mime' => 'application/pdf']);
                         }
                     });
                 } catch (\Throwable $e2) {
@@ -277,8 +328,8 @@ class CareerApiController extends Controller
                         $headers = "From: PT. Karya Kembar Bersama <{$mailUsername}>\r\n" .
                                    "Reply-To: {$request->name} <{$request->email}>\r\n" .
                                    "X-Mailer: PHP/" . phpversion() . "\r\n" .
-                                   "Content-Type: text/plain; charset=UTF-8\r\n";
-                        @mail($destinationEmail, "Lamaran Kerja: {$careerTitle} — dari {$request->name}", $body, $headers);
+                                   "Content-Type: text/html; charset=UTF-8\r\n";
+                        @mail($destinationEmail, "Lamaran Kerja: {$careerTitle} — dari {$request->name}", $bodyHtml, $headers);
                     } catch (\Throwable $e3) {
                         Log::warning('Career apply native mail error: ' . $e3->getMessage());
                     }
@@ -291,5 +342,39 @@ class CareerApiController extends Controller
             'message' => 'Lamaran Anda telah berhasil dikirim.',
             'data'    => $application,
         ]);
+    }
+
+    /**
+     * Admin: Get all career applications.
+     * GET /api/admin/applications
+     */
+    public function getApplications(): JsonResponse
+    {
+        try {
+            if (! Schema::hasTable('career_applications')) {
+                return response()->json([]);
+            }
+
+            $applications = CareerApplication::orderBy('created_at', 'desc')->get();
+            return response()->json($applications);
+        } catch (\Throwable $e) {
+            Log::error('Get applications error: ' . $e->getMessage());
+            return response()->json([]);
+        }
+    }
+
+    /**
+     * Admin: Delete a career application.
+     * DELETE /api/admin/applications/{id}
+     */
+    public function destroyApplication(int $id): JsonResponse
+    {
+        try {
+            $application = CareerApplication::findOrFail($id);
+            $application->delete();
+            return response()->json(['message' => 'Lamaran berhasil dihapus.']);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'Gagal menghapus lamaran.'], 500);
+        }
     }
 }

@@ -48,4 +48,8 @@ Route::middleware('auth:sanctum')->group(function () {
     // Contact Messages Inbox
     Route::get('/admin/messages', [SiteContentApiController::class, 'getMessages']);
     Route::delete('/admin/messages/{id}', [SiteContentApiController::class, 'destroyMessage']);
+
+    // Career Applications Inbox
+    Route::get('/admin/applications', [CareerApiController::class, 'getApplications']);
+    Route::delete('/admin/applications/{id}', [CareerApiController::class, 'destroyApplication']);
 });
