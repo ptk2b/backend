@@ -93,26 +93,50 @@ class SiteContentApiController extends Controller
             'message' => $request->message,
         ]);
 
-        // 2. Attempt sending email copy if mailer configured
+        // 2. Send email copy to info@ptk2b.com
         $destinationEmail = env('CONTACT_FORM_RECIPIENT', 'info@ptk2b.com');
-        $mailUsername     = env('MAIL_USERNAME');
+        $mailHost         = env('MAIL_HOST', 'mail.ptk2b.com');
+        $mailPort         = (int) env('MAIL_PORT', 465);
+        $mailUsername     = env('MAIL_USERNAME', 'info@ptk2b.com');
+        $mailPassword     = env('MAIL_PASSWORD');
 
-        if (!empty($mailUsername)) {
-            $body = "Pesan baru dari Form Kontak Website PT. Karya Kembar Bersama:\n\n"
-                  . "• Nama: {$request->name}\n"
-                  . "• Email Pengirim: {$request->email}\n"
-                  . "• Perusahaan: " . ($request->company ?: '-') . "\n\n"
-                  . "Pesan:\n{$request->message}\n\n"
-                  . "---\nDikirim dari Form Kontak https://www.ptk2b.com pada " . now()->format('d M Y H:i:s T');
+        $body = "Pesan baru dari Form Kontak Website PT. Karya Kembar Bersama:\n\n"
+              . "• Nama: {$request->name}\n"
+              . "• Email Pengirim: {$request->email}\n"
+              . "• Perusahaan: " . ($request->company ?: '-') . "\n\n"
+              . "Pesan:\n{$request->message}\n\n"
+              . "---\nDikirim dari Form Kontak https://www.ptk2b.com pada " . now()->format('d M Y H:i:s T');
 
+        if (!empty($mailPassword)) {
             try {
-                \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request) {
-                    $mail->to($destinationEmail)
-                         ->replyTo($request->email, $request->name)
-                         ->subject("Pesan Kontak Website dari {$request->name}");
-                });
+                // Direct EsmtpTransport to cPanel mail server port 465 SSL
+                $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport($mailHost, $mailPort, true);
+                $transport->setUsername($mailUsername);
+                $transport->setPassword($mailPassword);
+
+                $mailer = new \Symfony\Component\Mailer\Mailer($transport);
+                $emailMessage = (new \Symfony\Component\Mime\Email())
+                    ->from("\"PT. Karya Kembar Bersama\" <{$mailUsername}>")
+                    ->to($destinationEmail)
+                    ->replyTo("\"{$request->name}\" <{$request->email}>")
+                    ->subject("Pesan Kontak Website dari {$request->name}")
+                    ->html(nl2br(e($body)));
+
+                $mailer->send($emailMessage);
             } catch (\Throwable $e) {
-                \Illuminate\Support\Facades\Log::warning('Contact form email delivery error: ' . $e->getMessage());
+                \Illuminate\Support\Facades\Log::warning('Contact form EsmtpTransport delivery error: ' . $e->getMessage());
+
+                // Fallback to Laravel Mail facade
+                try {
+                    \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request, $mailUsername) {
+                        $mail->from($mailUsername, 'PT. Karya Kembar Bersama')
+                             ->to($destinationEmail)
+                             ->replyTo($request->email, $request->name)
+                             ->subject("Pesan Kontak Website dari {$request->name}");
+                    });
+                } catch (\Throwable $e2) {
+                    \Illuminate\Support\Facades\Log::warning('Contact form Mail facade error: ' . $e2->getMessage());
+                }
             }
         }
 
