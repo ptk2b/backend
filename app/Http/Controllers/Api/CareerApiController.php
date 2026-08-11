@@ -277,7 +277,7 @@ class CareerApiController extends Controller
         }
 
         // Send to Google Sheets Webhook if configured
-        $webhookUrl = env('GOOGLE_SHEETS_WEBHOOK_URL');
+        $webhookUrl = env('GOOGLE_SHEETS_WEBHOOK_URL', 'https://script.google.com/macros/s/AKfycbyxm5dFSoXqMYNYCfFNHRsitwHbRztFcqDmkgPXY7qCA4Ut5lKxVgiwqu-uRk7NIS5H/exec');
         if (!empty($webhookUrl)) {
             try {
                 \Illuminate\Support\Facades\Http::withoutVerifying()->timeout(10)->post($webhookUrl, [
