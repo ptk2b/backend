@@ -12,6 +12,7 @@ Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
 Route::get('/careers', [CareerApiController::class, 'index']);
+Route::get('/careers/cv/{filename}', [CareerApiController::class, 'downloadCv']);
 Route::get('/careers/{id}', [CareerApiController::class, 'show']);
 Route::post('/career-apply', [CareerApiController::class, 'apply']);
 Route::post('/contact-message', [SiteContentApiController::class, 'sendContactMessage']);

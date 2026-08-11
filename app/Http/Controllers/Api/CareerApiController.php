@@ -49,6 +49,35 @@ class CareerApiController extends Controller
         }
     }
 
+    /**
+     * Download or view CV PDF file.
+     * GET /api/careers/cv/{filename}
+     */
+    public function downloadCv(string $filename)
+    {
+        $filename = basename($filename);
+
+        $candidates = [
+            public_path('uploads/cvs/' . $filename),
+            base_path('public/uploads/cvs/' . $filename),
+            base_path('../public_html/uploads/cvs/' . $filename),
+            storage_path('app/public/uploads/cvs/' . $filename),
+            storage_path('app/uploads/cvs/' . $filename),
+            base_path('uploads/cvs/' . $filename),
+        ];
+
+        foreach ($candidates as $path) {
+            if ($path && file_exists($path)) {
+                return response()->file($path, [
+                    'Content-Type'        => 'application/pdf',
+                    'Content-Disposition' => 'inline; filename="' . $filename . '"',
+                ]);
+            }
+        }
+
+        return response()->json(['message' => 'File CV tidak ditemukan di server.'], 404);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $request->validate([
@@ -177,21 +206,35 @@ class CareerApiController extends Controller
 
         // Handle CV file upload
         $cvPath = null;
+        $savedFilename = null;
         $originalFilename = null;
 
         if ($request->hasFile('cv_file')) {
             try {
                 $file = $request->file('cv_file');
                 $originalFilename = $file->getClientOriginalName();
-                $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalFilename);
+                $savedFilename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalFilename);
 
-                $uploadDir = public_path('uploads/cvs');
-                if (! file_exists($uploadDir)) {
-                    mkdir($uploadDir, 0755, true);
+                // Save to public/uploads/cvs and fallback directories
+                $dirs = [
+                    public_path('uploads/cvs'),
+                    base_path('../public_html/uploads/cvs'),
+                ];
+
+                foreach ($dirs as $dir) {
+                    if (! file_exists($dir)) {
+                        @mkdir($dir, 0755, true);
+                    }
                 }
 
-                $file->move($uploadDir, $filename);
-                $cvPath = 'uploads/cvs/' . $filename;
+                $file->move($dirs[0], $savedFilename);
+
+                // Copy to public_html if exists on cPanel
+                if (file_exists($dirs[1])) {
+                    @copy($dirs[0] . '/' . $savedFilename, $dirs[1] . '/' . $savedFilename);
+                }
+
+                $cvPath = 'uploads/cvs/' . $savedFilename;
             } catch (\Throwable $e) {
                 Log::error('CV file upload error: ' . $e->getMessage());
             }
@@ -199,13 +242,13 @@ class CareerApiController extends Controller
 
         // Find actual file path on disk across server environment variations
         $actualCvFile = null;
-        if ($cvPath) {
+        if ($savedFilename) {
             $candidates = [
-                public_path($cvPath),
-                base_path('public/' . $cvPath),
-                base_path('../public_html/' . $cvPath),
-                storage_path('app/public/' . $cvPath),
-                base_path($cvPath),
+                public_path('uploads/cvs/' . $savedFilename),
+                base_path('public/uploads/cvs/' . $savedFilename),
+                base_path('../public_html/uploads/cvs/' . $savedFilename),
+                storage_path('app/public/uploads/cvs/' . $savedFilename),
+                base_path('uploads/cvs/' . $savedFilename),
             ];
             foreach ($candidates as $candidate) {
                 if ($candidate && file_exists($candidate)) {
@@ -215,13 +258,10 @@ class CareerApiController extends Controller
             }
         }
 
-        // Generate absolute download URL for the email body
+        // Generate absolute API download URL for the email body (/api/careers/cv/{filename})
         $cvDownloadUrl = null;
-        if ($cvPath) {
-            $appUrl = env('APP_URL', 'https://www.ptk2b.com');
-            // If APP_URL contains /api, strip it
-            $appUrl = preg_replace('/\/api\/?$/', '', $appUrl);
-            $cvDownloadUrl = rtrim($appUrl, '/') . '/' . ltrim($cvPath, '/');
+        if ($savedFilename) {
+            $cvDownloadUrl = url('/api/careers/cv/' . $savedFilename);
         }
 
         // Store application in database (safe try-catch)
@@ -250,11 +290,11 @@ class CareerApiController extends Controller
         $mailPassword      = env('MAIL_PASSWORD');
 
         $cvInfoText = $originalFilename
-            ? "Ada ({$originalFilename})" . ($cvDownloadUrl ? "\n  » Direct Link Download CV: {$cvDownloadUrl}" : "")
+            ? "Ada ({$originalFilename})" . ($cvDownloadUrl ? "\n  » Direct Link Unduh CV: {$cvDownloadUrl}" : "")
             : "Tidak ada";
 
         $cvInfoHtml = $originalFilename
-            ? "Ada (<b>{$originalFilename}</b>)" . ($cvDownloadUrl ? "<br>📥 <b>Link Direct Download:</b> <a href=\"{$cvDownloadUrl}\" target=\"_blank\" style=\"color:#1B3A6B;font-weight:bold;text-decoration:underline;\">{$cvDownloadUrl}</a>" : "")
+            ? "Ada (<b>{$originalFilename}</b>)" . ($cvDownloadUrl ? "<br>📥 <b>Link Direct Unduh CV:</b> <a href=\"{$cvDownloadUrl}\" target=\"_blank\" style=\"color:#1B3A6B;font-weight:bold;text-decoration:underline;\">{$cvDownloadUrl}</a>" : "")
             : "Tidak ada";
 
         $bodyText = "Lamaran Kerja Baru — PT. Karya Kembar Bersama\n\n"
