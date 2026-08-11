@@ -126,7 +126,7 @@ class SiteContentApiController extends Controller
             } catch (\Throwable $e) {
                 \Illuminate\Support\Facades\Log::warning('Contact form EsmtpTransport delivery error: ' . $e->getMessage());
 
-                // Fallback to Laravel Mail facade
+                // Fallback 1 to Laravel Mail facade
                 try {
                     \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request, $mailUsername) {
                         $mail->from($mailUsername, 'PT. Karya Kembar Bersama')
@@ -136,6 +136,17 @@ class SiteContentApiController extends Controller
                     });
                 } catch (\Throwable $e2) {
                     \Illuminate\Support\Facades\Log::warning('Contact form Mail facade error: ' . $e2->getMessage());
+
+                    // Fallback 2 to native PHP mail() for local cPanel delivery
+                    try {
+                        $headers = "From: PT. Karya Kembar Bersama <{$mailUsername}>\r\n" .
+                                   "Reply-To: {$request->name} <{$request->email}>\r\n" .
+                                   "X-Mailer: PHP/" . phpversion() . "\r\n" .
+                                   "Content-Type: text/plain; charset=UTF-8\r\n";
+                        @mail($destinationEmail, "Pesan Kontak Website dari {$request->name}", $body, $headers);
+                    } catch (\Throwable $e3) {
+                        \Illuminate\Support\Facades\Log::warning('Contact form native mail error: ' . $e3->getMessage());
+                    }
                 }
             }
         }
