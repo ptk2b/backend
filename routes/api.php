@@ -42,4 +42,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/careers', [CareerApiController::class, 'store']);
     Route::put('/careers/{id}', [CareerApiController::class, 'update']);
     Route::delete('/careers/{id}', [CareerApiController::class, 'destroy']);
+
+    // Contact Messages Inbox
+    Route::get('/admin/messages', [SiteContentApiController::class, 'getMessages']);
+    Route::delete('/admin/messages/{id}', [SiteContentApiController::class, 'destroyMessage']);
 });

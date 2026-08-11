@@ -73,7 +73,7 @@ class SiteContentApiController extends Controller
     }
 
     /**
-     * Send contact message from website form to info@ptk2b.com.
+     * Send contact message from website form.
      * POST /api/contact-message
      */
     public function sendContactMessage(Request $request): JsonResponse
@@ -85,28 +85,62 @@ class SiteContentApiController extends Controller
             'message' => 'required|string',
         ]);
 
+        // 1. Always store message in Database
+        $msg = \App\Models\ContactMessage::create([
+            'name'    => $request->name,
+            'email'   => $request->email,
+            'company' => $request->company,
+            'message' => $request->message,
+        ]);
+
+        // 2. Attempt sending email copy if mailer configured
         $destinationEmail = env('CONTACT_FORM_RECIPIENT', 'info@ptk2b.com');
+        $mailUsername     = env('MAIL_USERNAME');
 
-        $body = "Pesan baru dari Form Kontak Website PT. Karya Kembar Bersama:\n\n"
-              . "• Nama: {$request->name}\n"
-              . "• Email Pengirim: {$request->email}\n"
-              . "• Perusahaan: " . ($request->company ?: '-') . "\n\n"
-              . "Pesan:\n{$request->message}\n\n"
-              . "---\nDikirim dari Form Kontak https://www.ptk2b.com pada " . now()->format('d M Y H:i:s T');
+        if (!empty($mailUsername)) {
+            $body = "Pesan baru dari Form Kontak Website PT. Karya Kembar Bersama:\n\n"
+                  . "• Nama: {$request->name}\n"
+                  . "• Email Pengirim: {$request->email}\n"
+                  . "• Perusahaan: " . ($request->company ?: '-') . "\n\n"
+                  . "Pesan:\n{$request->message}\n\n"
+                  . "---\nDikirim dari Form Kontak https://www.ptk2b.com pada " . now()->format('d M Y H:i:s T');
 
-        try {
-            \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request) {
-                $mail->to($destinationEmail)
-                     ->replyTo($request->email, $request->name)
-                     ->subject("Pesan Kontak Website dari {$request->name}");
-            });
-        } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning('Contact form email failed: ' . $e->getMessage());
+            try {
+                \Illuminate\Support\Facades\Mail::raw($body, function ($mail) use ($destinationEmail, $request) {
+                    $mail->to($destinationEmail)
+                         ->replyTo($request->email, $request->name)
+                         ->subject("Pesan Kontak Website dari {$request->name}");
+                });
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning('Contact form email delivery error: ' . $e->getMessage());
+            }
         }
 
         return response()->json([
             'status'  => 'success',
-            'message' => "Pesan Anda berhasil dikirim ke {$destinationEmail}.",
+            'message' => "Pesan Anda telah berhasil dikirim dan tersimpan.",
+            'data'    => $msg,
         ]);
+    }
+
+    /**
+     * Admin: Get all contact messages.
+     * GET /api/admin/messages
+     */
+    public function getMessages(): JsonResponse
+    {
+        $messages = \App\Models\ContactMessage::orderBy('created_at', 'desc')->get();
+        return response()->json($messages);
+    }
+
+    /**
+     * Admin: Delete a contact message.
+     * DELETE /api/admin/messages/{id}
+     */
+    public function destroyMessage(int $id): JsonResponse
+    {
+        $message = \App\Models\ContactMessage::findOrFail($id);
+        $message->delete();
+        return response()->json(['message' => 'Pesan berhasil dihapus.']);
     }
 }
