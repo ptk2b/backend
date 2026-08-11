@@ -10,11 +10,13 @@ return new class extends Migration
     {
         Schema::create('career_applications', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('career_id')->constrained('careers')->onDelete('cascade');
+            $table->unsignedBigInteger('career_id')->nullable();
+            $table->string('career_title')->nullable();
             $table->string('name');
             $table->string('email');
             $table->string('phone', 30)->nullable();
             $table->text('cover_letter')->nullable();
+            $table->string('cv_path')->nullable();
             $table->timestamps();
         });
     }

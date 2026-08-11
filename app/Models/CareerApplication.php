@@ -9,10 +9,12 @@ class CareerApplication extends Model
 {
     protected $fillable = [
         'career_id',
+        'career_title',
         'name',
         'email',
         'phone',
         'cover_letter',
+        'cv_path',
     ];
 
     public function career(): BelongsTo
