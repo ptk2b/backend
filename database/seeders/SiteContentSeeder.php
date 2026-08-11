@@ -151,6 +151,10 @@ class SiteContentSeeder extends Seeder
             ['section' => 'footer', 'content_key' => 'tagline', 'lang' => 'en', 'content_value' => 'Energy for a Sustainable Indonesia', 'content_type' => 'text'],
             ['section' => 'footer', 'content_key' => 'address', 'lang' => 'id', 'content_value' => 'Jl. Tambang-Site Kideco Jaya Agung, Kec. Batu Sopang, Kalimantan Timur, Indonesia', 'content_type' => 'text'],
             ['section' => 'footer', 'content_key' => 'address', 'lang' => 'en', 'content_value' => 'Jl. Pertambangan Raya No. 1, East Kalimantan, Indonesia', 'content_type' => 'text'],
+            ['section' => 'footer', 'content_key' => 'phone', 'lang' => 'id', 'content_value' => '+62 812-5108-4891', 'content_type' => 'text'],
+            ['section' => 'footer', 'content_key' => 'phone', 'lang' => 'en', 'content_value' => '+62 812-5108-4891', 'content_type' => 'text'],
+            ['section' => 'footer', 'content_key' => 'email', 'lang' => 'id', 'content_value' => 'info@ptk2b.com', 'content_type' => 'text'],
+            ['section' => 'footer', 'content_key' => 'email', 'lang' => 'en', 'content_value' => 'info@ptk2b.com', 'content_type' => 'text'],
         ];
 
         foreach ($contents as $content) {
