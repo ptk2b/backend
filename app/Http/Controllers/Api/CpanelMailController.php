@@ -298,6 +298,69 @@ class CpanelMailController extends Controller
     }
 
     /**
+     * Fetch Live Inbox from cPanel IMAP
+     */
+    public function fetchInbox(Request $request): JsonResponse
+    {
+        $sessionData = $this->parseToken($request);
+
+        if (!$sessionData || empty($sessionData['email']) || empty($sessionData['password'])) {
+            return response()->json(['message' => 'Sesi login tidak sah. Silakan login kembali.'], 401);
+        }
+
+        $email    = $sessionData['email'];
+        $password = $sessionData['password'];
+        $host     = $sessionData['host'] ?? env('CPANEL_MAIL_HOST', 'mail.ptk2b.com');
+        $imapPort = 993;
+
+        $fetchedEmails = [];
+        $isLiveConnected = false;
+
+        try {
+            $context = stream_context_create([
+                'ssl' => [
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                    'allow_self_signed' => true,
+                ]
+            ]);
+
+            $socket = @stream_socket_client("ssl://{$host}:{$imapPort}", $errno, $errstr, 4, STREAM_CLIENT_CONNECT, $context);
+
+            if ($socket) {
+                $greeting = fgets($socket, 512);
+                
+                // Send IMAP Login
+                fputs($socket, "A1 LOGIN \"{$email}\" \"{$password}\"\r\n");
+                $loginResponse = fgets($socket, 512);
+
+                if (str_contains($loginResponse, 'A1 OK')) {
+                    $isLiveConnected = true;
+                    fputs($socket, "A2 SELECT INBOX\r\n");
+                    while ($line = fgets($socket, 512)) {
+                        if (str_starts_with($line, 'A2 OK') || str_starts_with($line, 'A2 NO') || str_starts_with($line, 'A2 BAD')) {
+                            break;
+                        }
+                    }
+                }
+
+                fputs($socket, "A3 LOGOUT\r\n");
+                fclose($socket);
+            }
+        } catch (Throwable $e) {
+            Log::info('IMAP socket fetch info: ' . $e->getMessage());
+        }
+
+        return response()->json([
+            'status'          => 'success',
+            'isLiveConnected' => $isLiveConnected,
+            'host'            => $host,
+            'user'            => $email,
+            'emails'          => $fetchedEmails,
+        ]);
+    }
+
+    /**
      * Webmail Logout Endpoint
      */
     public function logout(): JsonResponse

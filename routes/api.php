@@ -24,6 +24,7 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::prefix('webmail')->group(function () {
     Route::post('/login', [CpanelMailController::class, 'login']);
     Route::get('/me', [CpanelMailController::class, 'me']);
+    Route::get('/inbox', [CpanelMailController::class, 'fetchInbox']);
     Route::post('/send', [CpanelMailController::class, 'sendMail']);
     Route::post('/logout', [CpanelMailController::class, 'logout']);
 });
