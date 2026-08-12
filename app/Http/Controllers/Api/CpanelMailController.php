@@ -235,9 +235,10 @@ class CpanelMailController extends Controller
         }
 
         $request->validate([
-            'to'      => 'required|email',
-            'subject' => 'required|string|max:255',
-            'body'    => 'required|string',
+            'to'         => 'required|email',
+            'subject'    => 'required|string|max:255',
+            'body'       => 'required|string',
+            'attachment' => 'nullable|file|max:10240', // Max 10MB
         ]);
 
         $fromEmail = $sessionData['email'];
@@ -264,11 +265,20 @@ class CpanelMailController extends Controller
                 ->subject($request->subject)
                 ->html(nl2br(e($request->body)));
 
+            if ($request->hasFile('attachment')) {
+                $file = $request->file('attachment');
+                $emailMessage->attachFromPath(
+                    $file->getPathname(),
+                    $file->getClientOriginalName(),
+                    $file->getClientMimeType()
+                );
+            }
+
             $mailer->send($emailMessage);
 
             return response()->json([
                 'status'  => 'success',
-                'message' => 'Email berhasil dikirim ke ' . $request->to,
+                'message' => 'Email ' . ($request->hasFile('attachment') ? 'beserta lampiran ' : '') . 'berhasil dikirim ke ' . $request->to,
             ]);
 
         } catch (Throwable $e) {
