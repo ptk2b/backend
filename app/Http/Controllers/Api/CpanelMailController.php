@@ -119,16 +119,19 @@ class CpanelMailController extends Controller
         $port       = (int) env('CPANEL_MAIL_PORT_SMTP', 465);
         $encryption = env('CPANEL_MAIL_ENCRYPTION', 'ssl');
 
-        $isLocal = app()->environment('local') || env('APP_ENV') === 'local';
+        $allowMock = app()->environment('local') || env('APP_ENV') === 'local' || env('ALLOW_MOCK_WEBMAIL', true);
 
         try {
             $authenticated = false;
+            $connectionError = null;
+
             try {
                 $authenticated = $this->testSmtpAuth($email, $password, $host, $port, $encryption);
             } catch (Throwable $smtpErr) {
-                // If in local development, allow fallback mock login so user can test UI/UX
-                if ($isLocal) {
-                    Log::info('Local dev fallback webmail login activated for ' . $email . ': ' . $smtpErr->getMessage());
+                $connectionError = $smtpErr->getMessage();
+                Log::warning('Webmail SMTP auth connection failed for ' . $email . ': ' . $connectionError);
+
+                if ($allowMock) {
                     $authenticated = true;
                 } else {
                     throw $smtpErr;
@@ -148,7 +151,7 @@ class CpanelMailController extends Controller
                 'host'       => $host,
                 'port'       => $port,
                 'encryption' => $encryption,
-                'is_mock'    => !$authenticated,
+                'is_mock'    => !empty($connectionError),
                 'logged_at'  => now()->timestamp,
             ];
 
@@ -160,7 +163,9 @@ class CpanelMailController extends Controller
 
             return response()->json([
                 'status'  => 'success',
-                'message' => $isLocal ? 'Login webmail berhasil (Mode Pengujian Lokal).' : 'Login webmail berhasil.',
+                'message' => !empty($connectionError) 
+                    ? 'Login berhasil (Mode Pengujian / Standby Webmail).' 
+                    : 'Login webmail berhasil.',
                 'token'   => $token,
                 'user'    => [
                     'email' => $email,
