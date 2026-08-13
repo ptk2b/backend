@@ -5,6 +5,15 @@
 
     RewriteEngine On
 
+    # Block access to sensitive hidden files & configs
+    <FilesMatch "^\.(env|git|htaccess|example)|composer\.(json|lock)$">
+        Order allow,deny
+        Deny from all
+    </FilesMatch>
+
+    # Block access to hidden directories
+    RedirectMatch 404 /\.git
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
@@ -23,3 +32,4 @@
     RewriteCond %{REQUEST_FILENAME} !-f
     RewriteRule ^ index.php [L]
 </IfModule>
+
