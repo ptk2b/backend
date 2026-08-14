@@ -202,8 +202,8 @@ class SiteContentApiController extends Controller
             // Store file using public disk (storage/app/public/uploads/cms)
             $path = $file->storeAs('uploads/cms', $filename, 'public');
 
-            // Generate URL (/storage/uploads/cms/filename)
-            $url = \Illuminate\Support\Facades\Storage::url($path);
+            // Generate relative URL (/storage/uploads/cms/filename)
+            $url = '/storage/' . $path;
 
             return response()->json([
                 'status' => 'success',
