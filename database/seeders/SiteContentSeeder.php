@@ -65,6 +65,10 @@ class SiteContentSeeder extends Seeder
             ['section' => 'about', 'content_key' => 'visiText', 'lang' => 'en', 'content_value' => 'To be a trusted and sustainable energy mining company in Indonesia.', 'content_type' => 'text'],
             ['section' => 'about', 'content_key' => 'misiText', 'lang' => 'id', 'content_value' => 'Mengoperasikan pertambangan yang aman, efisien, dan ramah lingkungan demi kesejahteraan bangsa.', 'content_type' => 'text'],
             ['section' => 'about', 'content_key' => 'misiText', 'lang' => 'en', 'content_value' => 'To operate safe, efficient, and environmentally friendly mines for the nation\'s welfare.', 'content_type' => 'text'],
+            ['section' => 'about', 'content_key' => 'badgeValue', 'lang' => 'id', 'content_value' => '20+', 'content_type' => 'text'],
+            ['section' => 'about', 'content_key' => 'badgeValue', 'lang' => 'en', 'content_value' => '20+', 'content_type' => 'text'],
+            ['section' => 'about', 'content_key' => 'badgeLabel', 'lang' => 'id', 'content_value' => 'Tahun Beroperasi', 'content_type' => 'text'],
+            ['section' => 'about', 'content_key' => 'badgeLabel', 'lang' => 'en', 'content_value' => 'Years of Operation', 'content_type' => 'text'],
 
             // ===== BUSINESS SECTION =====
             ['section' => 'business', 'content_key' => 'eyebrow', 'lang' => 'id', 'content_value' => 'Bisnis Kami', 'content_type' => 'text'],
