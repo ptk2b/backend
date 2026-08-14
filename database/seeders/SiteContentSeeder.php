@@ -37,6 +37,8 @@ class SiteContentSeeder extends Seeder
                 ['value' => '15M+', 'label' => 'Tons Produced'],
                 ['value' => '100%', 'label' => 'Safety Committed'],
             ]), 'content_type' => 'json'],
+            ['section' => 'hero', 'content_key' => 'bgImage', 'lang' => 'id', 'content_value' => '/hero-bg.jpg', 'content_type' => 'text'],
+            ['section' => 'hero', 'content_key' => 'bgImage', 'lang' => 'en', 'content_value' => '/hero-bg.jpg', 'content_type' => 'text'],
 
             // ===== ABOUT SECTION =====
             ['section' => 'about', 'content_key' => 'eyebrow', 'lang' => 'id', 'content_value' => 'Tentang Kami', 'content_type' => 'text'],
@@ -69,6 +71,8 @@ class SiteContentSeeder extends Seeder
             ['section' => 'about', 'content_key' => 'badgeValue', 'lang' => 'en', 'content_value' => '20+', 'content_type' => 'text'],
             ['section' => 'about', 'content_key' => 'badgeLabel', 'lang' => 'id', 'content_value' => 'Tahun Beroperasi', 'content_type' => 'text'],
             ['section' => 'about', 'content_key' => 'badgeLabel', 'lang' => 'en', 'content_value' => 'Years of Operation', 'content_type' => 'text'],
+            ['section' => 'about', 'content_key' => 'image', 'lang' => 'id', 'content_value' => '/about-bg.jpg', 'content_type' => 'text'],
+            ['section' => 'about', 'content_key' => 'image', 'lang' => 'en', 'content_value' => '/about-bg.jpg', 'content_type' => 'text'],
 
             // ===== BUSINESS SECTION =====
             ['section' => 'business', 'content_key' => 'eyebrow', 'lang' => 'id', 'content_value' => 'Bisnis Kami', 'content_type' => 'text'],

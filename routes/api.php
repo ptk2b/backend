@@ -48,6 +48,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Site Content CMS
     Route::put('/content/{section}', [SiteContentApiController::class, 'update']);
+    Route::post('/admin/content/upload-image', [SiteContentApiController::class, 'uploadImage']);
 
     // Careers & CV Download Protection
     Route::get('/careers/cv/{filename}', [CareerApiController::class, 'downloadCv']);

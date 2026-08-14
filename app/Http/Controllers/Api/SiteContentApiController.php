@@ -178,4 +178,42 @@ class SiteContentApiController extends Controller
         $message->delete();
         return response()->json(['message' => 'Pesan berhasil dihapus.']);
     }
+
+    /**
+     * Admin: Upload image for CMS content.
+     * POST /api/admin/content/upload-image
+     */
+    public function uploadImage(Request $request): JsonResponse
+    {
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,png,jpg,webp|dimensions:width=1024,height=1024|max:4096',
+        ], [
+            'image.required' => 'File gambar wajib diunggah.',
+            'image.image' => 'File harus berupa gambar.',
+            'image.mimes' => 'Format gambar harus jpeg, png, jpg, atau webp.',
+            'image.dimensions' => 'Ukuran resolusi gambar harus tepat 1024x1024 piksel.',
+            'image.max' => 'Ukuran file gambar maksimal adalah 4MB.',
+        ]);
+
+        if ($request->hasFile('image')) {
+            $file = $request->file('image');
+            $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $file->getClientOriginalName());
+            $destinationPath = public_path('uploads/cms');
+
+            if (!\Illuminate\Support\Facades\File::exists($destinationPath)) {
+                \Illuminate\Support\Facades\File::makeDirectory($destinationPath, 0755, true);
+            }
+
+            $file->move($destinationPath, $filename);
+            $url = '/uploads/cms/' . $filename;
+
+            return response()->json([
+                'status' => 'success',
+                'url' => $url,
+            ]);
+        }
+
+        return response()->json(['message' => 'Tidak ada file yang diunggah.'], 400);
+    }
 }
+
