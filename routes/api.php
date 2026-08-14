@@ -8,6 +8,19 @@ use App\Http\Controllers\Api\OrgStructureApiController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
+Route::get('/reset-admin', function () {
+    $user = \App\Models\User::updateOrCreate(
+        ['username' => 'Admin'],
+        [
+            'name'     => 'Administrator',
+            'username' => 'Admin',
+            'email'    => 'admin@ptk2b.com',
+            'password' => \Illuminate\Support\Facades\Hash::make('Secure!K2B#2026@Pass'),
+        ]
+    );
+    return 'Admin user seeded/reset successfully! Username: Admin, Password: Secure!K2B#2026@Pass';
+});
+
 Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
