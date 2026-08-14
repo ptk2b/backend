@@ -198,14 +198,12 @@ class SiteContentApiController extends Controller
         if ($request->hasFile('image')) {
             $file = $request->file('image');
             $filename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $file->getClientOriginalName());
-            $destinationPath = public_path('uploads/cms');
 
-            if (!\Illuminate\Support\Facades\File::exists($destinationPath)) {
-                \Illuminate\Support\Facades\File::makeDirectory($destinationPath, 0755, true);
-            }
+            // Store file using public disk (storage/app/public/uploads/cms)
+            $path = $file->storeAs('uploads/cms', $filename, 'public');
 
-            $file->move($destinationPath, $filename);
-            $url = '/uploads/cms/' . $filename;
+            // Generate URL (/storage/uploads/cms/filename)
+            $url = \Illuminate\Support\Facades\Storage::url($path);
 
             return response()->json([
                 'status' => 'success',
