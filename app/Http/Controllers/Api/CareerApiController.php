@@ -61,6 +61,7 @@ class CareerApiController extends Controller
             public_path('uploads/cvs/' . $filename),
             base_path('public/uploads/cvs/' . $filename),
             base_path('../public_html/uploads/cvs/' . $filename),
+            base_path('../../public_html/uploads/cvs/' . $filename),
             storage_path('app/public/uploads/cvs/' . $filename),
             storage_path('app/uploads/cvs/' . $filename),
             base_path('uploads/cvs/' . $filename),
@@ -69,8 +70,10 @@ class CareerApiController extends Controller
         foreach ($candidates as $path) {
             if ($path && file_exists($path)) {
                 return response()->file($path, [
-                    'Content-Type'        => 'application/pdf',
-                    'Content-Disposition' => 'inline; filename="' . $filename . '"',
+                    'Content-Type'                => 'application/pdf',
+                    'Content-Disposition'         => 'inline; filename="' . $filename . '"',
+                    'Access-Control-Allow-Origin' => '*',
+                    'Cache-Control'               => 'public, max-age=86400',
                 ]);
             }
         }
@@ -219,6 +222,7 @@ class CareerApiController extends Controller
                 $dirs = [
                     public_path('uploads/cvs'),
                     base_path('../public_html/uploads/cvs'),
+                    storage_path('app/public/uploads/cvs'),
                 ];
 
                 foreach ($dirs as $dir) {
@@ -229,9 +233,11 @@ class CareerApiController extends Controller
 
                 $file->move($dirs[0], $savedFilename);
 
-                // Copy to public_html if exists on cPanel
-                if (file_exists($dirs[1])) {
-                    @copy($dirs[0] . '/' . $savedFilename, $dirs[1] . '/' . $savedFilename);
+                // Copy to other locations so it's accessible across all server configurations
+                foreach (array_slice($dirs, 1) as $fallbackDir) {
+                    if (file_exists($dirs[0] . '/' . $savedFilename) && file_exists($fallbackDir)) {
+                        @copy($dirs[0] . '/' . $savedFilename, $fallbackDir . '/' . $savedFilename);
+                    }
                 }
 
                 $cvPath = 'uploads/cvs/' . $savedFilename;
@@ -247,6 +253,7 @@ class CareerApiController extends Controller
                 public_path('uploads/cvs/' . $savedFilename),
                 base_path('public/uploads/cvs/' . $savedFilename),
                 base_path('../public_html/uploads/cvs/' . $savedFilename),
+                base_path('../../public_html/uploads/cvs/' . $savedFilename),
                 storage_path('app/public/uploads/cvs/' . $savedFilename),
                 base_path('uploads/cvs/' . $savedFilename),
             ];
@@ -270,10 +277,25 @@ class CareerApiController extends Controller
         $masaKerja          = $request->masa_kerja ?? '';
         $rekomendasi        = $request->rekomendasi ?? '';
 
-        // Generate absolute API download URL for the email body (/api/careers/cv/{filename})
+        // Calculate age if not directly provided
+        $calculatedUmur = $request->umur ?? '';
+        if (empty($calculatedUmur) && !empty($tanggalLahir)) {
+            try {
+                $calculatedUmur = (string) \Carbon\Carbon::parse($tanggalLahir)->age;
+            } catch (\Throwable $e) {
+                // Ignore parse errors
+            }
+        }
+
+        // Generate absolute API download URL for the email body and Google Sheets (/api/careers/cv/{filename})
         $cvDownloadUrl = null;
         if ($savedFilename) {
-            $cvDownloadUrl = url('/api/careers/cv/' . $savedFilename);
+            $host = $request->getSchemeAndHttpHost();
+            if (!empty($host) && !str_contains($host, 'localhost')) {
+                $cvDownloadUrl = rtrim($host, '/') . '/api/careers/cv/' . $savedFilename;
+            } else {
+                $cvDownloadUrl = url('/api/careers/cv/' . $savedFilename);
+            }
         }
 
         // Send to Google Sheets Webhook if configured
@@ -283,10 +305,12 @@ class CareerApiController extends Controller
                 \Illuminate\Support\Facades\Http::withoutVerifying()->timeout(10)->post($webhookUrl, [
                     'tanggal_masuk'       => now()->format('d/m/Y H:i'),
                     'nama'                => $request->name,
-                    'umur'                => $request->umur ?? '',
+                    'email'               => $request->email,
+                    'umur'                => $calculatedUmur,
                     'tempat_lahir'        => $tempatLahir,
                     'tanggal_lahir'       => $tanggalLahir,
                     'nomor_hp'            => $request->phone ?? '',
+                    'phone'               => $request->phone ?? '',
                     'alamat_domisili'     => $alamatDomisili,
                     'pendidikan_terakhir' => $pendidikanTerakhir,
                     'nama_lembaga'        => $namaLembaga,
@@ -296,7 +320,10 @@ class CareerApiController extends Controller
                     'masa_kerja'          => $masaKerja,
                     'jabatan_dilamar'     => $careerTitle,
                     'rekomendasi'         => $rekomendasi,
+                    'surat_lamaran'       => $request->cover_letter ?? '',
+                    'cover_letter'        => $request->cover_letter ?? '',
                     'cv_url'              => $cvDownloadUrl ?? '',
+                    'cv_nama_file'        => $originalFilename ?? '',
                 ]);
             } catch (\Throwable $e) {
                 Log::warning('Google Sheets Webhook error: ' . $e->getMessage());
