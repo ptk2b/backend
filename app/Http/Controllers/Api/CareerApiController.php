@@ -348,12 +348,15 @@ class CareerApiController extends Controller
         $cvDownloadUrl = null;
         if ($savedFilename) {
             $configuredAppUrl = env('APP_URL');
-            if (!empty($configuredAppUrl) && !str_contains($configuredAppUrl, 'localhost') && !str_contains($configuredAppUrl, '127.0.0.1')) {
+            if (!empty($configuredAppUrl) && str_contains($configuredAppUrl, 'ptk2b.com')) {
+                $cvDownloadUrl = 'https://api.ptk2b.com/api/careers/cv/' . $savedFilename;
+            } elseif (!empty($configuredAppUrl) && !str_contains($configuredAppUrl, 'localhost') && !str_contains($configuredAppUrl, '127.0.0.1')) {
                 $cvDownloadUrl = rtrim($configuredAppUrl, '/') . '/api/careers/cv/' . $savedFilename;
             } else {
                 $host = $request->getSchemeAndHttpHost();
-                if (!empty($host) && !str_contains($host, 'localhost') && !str_contains($host, '127.0.0.1')) {
-                    // Normalize to HTTPS in production
+                if (!empty($host) && str_contains($host, 'ptk2b.com')) {
+                    $cvDownloadUrl = 'https://api.ptk2b.com/api/careers/cv/' . $savedFilename;
+                } elseif (!empty($host) && !str_contains($host, 'localhost') && !str_contains($host, '127.0.0.1')) {
                     $host = preg_replace('/^http:/i', 'https:', $host);
                     $cvDownloadUrl = rtrim($host, '/') . '/api/careers/cv/' . $savedFilename;
                 } else {
