@@ -55,34 +55,52 @@ class CareerApiController extends Controller
      */
     public function downloadCv(Request $request, string $filename)
     {
-        $filename = basename($filename);
+        $rawFilename = basename($filename);
+        $decodedFilename = urldecode($rawFilename);
+        $rawDecodedFilename = rawurldecode($rawFilename);
 
-        $candidates = [
-            public_path('uploads/cvs/' . $filename),
-            base_path('public/uploads/cvs/' . $filename),
-            base_path('../public_html/uploads/cvs/' . $filename),
-            base_path('../../public_html/uploads/cvs/' . $filename),
-            storage_path('app/public/uploads/cvs/' . $filename),
-            storage_path('app/uploads/cvs/' . $filename),
-            base_path('uploads/cvs/' . $filename),
+        $nameVariants = array_unique([$rawFilename, $decodedFilename, $rawDecodedFilename]);
+
+        $searchDirs = [
+            public_path('uploads/cvs'),
+            public_path('storage/uploads/cvs'),
+            base_path('public/uploads/cvs'),
+            base_path('public/storage/uploads/cvs'),
+            storage_path('app/public/uploads/cvs'),
+            storage_path('app/uploads/cvs'),
+            base_path('../public_html/uploads/cvs'),
+            base_path('../public_html/storage/uploads/cvs'),
+            base_path('../../public_html/uploads/cvs'),
+            base_path('../../public_html/storage/uploads/cvs'),
+            base_path('uploads/cvs'),
+            base_path('../uploads/cvs'),
         ];
 
-        foreach ($candidates as $path) {
-            if ($path && file_exists($path) && is_file($path)) {
-                if ($request->boolean('download')) {
-                    return response()->download($path, $filename, [
-                        'Content-Type'                => 'application/pdf',
-                        'Access-Control-Allow-Origin' => '*',
-                    ]);
-                }
+        // 1. Direct candidate matching
+        foreach ($searchDirs as $dir) {
+            if (!$dir || !file_exists($dir)) continue;
 
-                return response()->file($path, [
-                    'Content-Type'                => 'application/pdf',
-                    'Content-Disposition'         => 'inline; filename="' . $filename . '"',
-                    'Access-Control-Allow-Origin' => '*',
-                    'Cache-Control'               => 'public, max-age=86400',
-                    'X-Content-Type-Options'      => 'nosniff',
-                ]);
+            foreach ($nameVariants as $variant) {
+                $filePath = rtrim($dir, '/\\') . DIRECTORY_SEPARATOR . $variant;
+                if (file_exists($filePath) && is_file($filePath)) {
+                    return $this->serveCvFile($request, $filePath, $variant);
+                }
+            }
+        }
+
+        // 2. Fuzzy matching (e.g. filename with special characters or prefix timestamp)
+        foreach ($searchDirs as $dir) {
+            if (!$dir || !file_exists($dir)) continue;
+
+            foreach ($nameVariants as $variant) {
+                $matches = glob(rtrim($dir, '/\\') . DIRECTORY_SEPARATOR . '*' . $variant . '*');
+                if (!empty($matches)) {
+                    foreach ($matches as $match) {
+                        if (file_exists($match) && is_file($match)) {
+                            return $this->serveCvFile($request, $match, basename($match));
+                        }
+                    }
+                }
             }
         }
 
@@ -90,6 +108,24 @@ class CareerApiController extends Controller
             'status'  => 'error',
             'message' => 'File CV tidak ditemukan di server atau berkas telah dipindahkan.',
         ], 404);
+    }
+
+    private function serveCvFile(Request $request, string $path, string $filename)
+    {
+        if ($request->boolean('download')) {
+            return response()->download($path, $filename, [
+                'Content-Type'                => 'application/pdf',
+                'Access-Control-Allow-Origin' => '*',
+            ]);
+        }
+
+        return response()->file($path, [
+            'Content-Type'                => 'application/pdf',
+            'Content-Disposition'         => 'inline; filename="' . $filename . '"',
+            'Access-Control-Allow-Origin' => '*',
+            'Cache-Control'               => 'public, max-age=86400',
+            'X-Content-Type-Options'      => 'nosniff',
+        ]);
     }
 
     public function store(Request $request): JsonResponse
@@ -233,8 +269,11 @@ class CareerApiController extends Controller
                 // Target directories for saving and cross-environment accessibility
                 $dirs = [
                     public_path('uploads/cvs'),
+                    public_path('storage/uploads/cvs'),
                     base_path('../public_html/uploads/cvs'),
+                    base_path('../public_html/storage/uploads/cvs'),
                     storage_path('app/public/uploads/cvs'),
+                    storage_path('app/uploads/cvs'),
                 ];
 
                 foreach ($dirs as $dir) {
