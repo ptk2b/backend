@@ -25,6 +25,7 @@ Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
 Route::get('/careers', [CareerApiController::class, 'index']);
+Route::get('/careers/cv/{filename}', [CareerApiController::class, 'downloadCv']);
 Route::get('/careers/{id}', [CareerApiController::class, 'show']);
 Route::get('/structure', [OrgStructureApiController::class, 'index']);
 
@@ -50,8 +51,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/content/{section}', [SiteContentApiController::class, 'update']);
     Route::post('/admin/content/upload-image', [SiteContentApiController::class, 'uploadImage']);
 
-    // Careers & CV Download Protection
-    Route::get('/careers/cv/{filename}', [CareerApiController::class, 'downloadCv']);
+    // Careers
     Route::post('/careers', [CareerApiController::class, 'store']);
     Route::put('/careers/{id}', [CareerApiController::class, 'update']);
     Route::delete('/careers/{id}', [CareerApiController::class, 'destroy']);

@@ -53,7 +53,7 @@ class CareerApiController extends Controller
      * Download or view CV PDF file.
      * GET /api/careers/cv/{filename}
      */
-    public function downloadCv(string $filename)
+    public function downloadCv(Request $request, string $filename)
     {
         $filename = basename($filename);
 
@@ -68,17 +68,28 @@ class CareerApiController extends Controller
         ];
 
         foreach ($candidates as $path) {
-            if ($path && file_exists($path)) {
+            if ($path && file_exists($path) && is_file($path)) {
+                if ($request->boolean('download')) {
+                    return response()->download($path, $filename, [
+                        'Content-Type'                => 'application/pdf',
+                        'Access-Control-Allow-Origin' => '*',
+                    ]);
+                }
+
                 return response()->file($path, [
                     'Content-Type'                => 'application/pdf',
                     'Content-Disposition'         => 'inline; filename="' . $filename . '"',
                     'Access-Control-Allow-Origin' => '*',
                     'Cache-Control'               => 'public, max-age=86400',
+                    'X-Content-Type-Options'      => 'nosniff',
                 ]);
             }
         }
 
-        return response()->json(['message' => 'File CV tidak ditemukan di server.'], 404);
+        return response()->json([
+            'status'  => 'error',
+            'message' => 'File CV tidak ditemukan di server atau berkas telah dipindahkan.',
+        ], 404);
     }
 
     public function store(Request $request): JsonResponse
@@ -211,6 +222,7 @@ class CareerApiController extends Controller
         $cvPath = null;
         $savedFilename = null;
         $originalFilename = null;
+        $actualCvFile = null;
 
         if ($request->hasFile('cv_file')) {
             try {
@@ -218,7 +230,7 @@ class CareerApiController extends Controller
                 $originalFilename = $file->getClientOriginalName();
                 $savedFilename = time() . '_' . preg_replace('/[^a-zA-Z0-9._-]/', '', $originalFilename);
 
-                // Save to public/uploads/cvs and fallback directories
+                // Target directories for saving and cross-environment accessibility
                 $dirs = [
                     public_path('uploads/cvs'),
                     base_path('../public_html/uploads/cvs'),
@@ -231,12 +243,19 @@ class CareerApiController extends Controller
                     }
                 }
 
-                $file->move($dirs[0], $savedFilename);
+                $movedFile = $file->move($dirs[0], $savedFilename);
+                if ($movedFile) {
+                    $actualCvFile = $movedFile->getRealPath() ?: ($dirs[0] . DIRECTORY_SEPARATOR . $savedFilename);
+                } else {
+                    $actualCvFile = $dirs[0] . DIRECTORY_SEPARATOR . $savedFilename;
+                }
 
-                // Copy to other locations so it's accessible across all server configurations
-                foreach (array_slice($dirs, 1) as $fallbackDir) {
-                    if (file_exists($dirs[0] . '/' . $savedFilename) && file_exists($fallbackDir)) {
-                        @copy($dirs[0] . '/' . $savedFilename, $fallbackDir . '/' . $savedFilename);
+                // Copy to other locations so it's accessible across all server configurations (cPanel/direct static/storage)
+                if (file_exists($actualCvFile)) {
+                    foreach (array_slice($dirs, 1) as $fallbackDir) {
+                        if (file_exists($fallbackDir)) {
+                            @copy($actualCvFile, $fallbackDir . DIRECTORY_SEPARATOR . $savedFilename);
+                        }
                     }
                 }
 
@@ -246,9 +265,8 @@ class CareerApiController extends Controller
             }
         }
 
-        // Find actual file path on disk across server environment variations
-        $actualCvFile = null;
-        if ($savedFilename) {
+        // Find actual file path on disk if not already set
+        if ($savedFilename && (! $actualCvFile || ! file_exists($actualCvFile))) {
             $candidates = [
                 public_path('uploads/cvs/' . $savedFilename),
                 base_path('public/uploads/cvs/' . $savedFilename),
@@ -287,14 +305,21 @@ class CareerApiController extends Controller
             }
         }
 
-        // Generate absolute API download URL for the email body and Google Sheets (/api/careers/cv/{filename})
+        // Generate absolute API download URL for Google Sheets and Email (/api/careers/cv/{filename})
         $cvDownloadUrl = null;
         if ($savedFilename) {
-            $host = $request->getSchemeAndHttpHost();
-            if (!empty($host) && !str_contains($host, 'localhost')) {
-                $cvDownloadUrl = rtrim($host, '/') . '/api/careers/cv/' . $savedFilename;
+            $configuredAppUrl = env('APP_URL');
+            if (!empty($configuredAppUrl) && !str_contains($configuredAppUrl, 'localhost') && !str_contains($configuredAppUrl, '127.0.0.1')) {
+                $cvDownloadUrl = rtrim($configuredAppUrl, '/') . '/api/careers/cv/' . $savedFilename;
             } else {
-                $cvDownloadUrl = url('/api/careers/cv/' . $savedFilename);
+                $host = $request->getSchemeAndHttpHost();
+                if (!empty($host) && !str_contains($host, 'localhost') && !str_contains($host, '127.0.0.1')) {
+                    // Normalize to HTTPS in production
+                    $host = preg_replace('/^http:/i', 'https:', $host);
+                    $cvDownloadUrl = rtrim($host, '/') . '/api/careers/cv/' . $savedFilename;
+                } else {
+                    $cvDownloadUrl = url('/api/careers/cv/' . $savedFilename);
+                }
             }
         }
 
