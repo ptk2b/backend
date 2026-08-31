@@ -10,7 +10,7 @@ class ContractHistory extends Model
     protected $fillable = [
         'employee_id', 'kontrak_ke',
         'tanggal_mulai', 'tanggal_selesai',
-        'masa_kontrak_bulan', 'sk_path', 'catatan',
+        'masa_kontrak_bulan', 'sk_path', 'catatan', 'diserahkan',
     ];
 
     protected $casts = [

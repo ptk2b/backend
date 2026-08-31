@@ -544,10 +544,32 @@ class EmployeeApiController extends Controller
                         'email_rumus'                   => !empty($row['email_rumus']) ? trim($row['email_rumus']) : null,
                         'npp'                           => !empty($row['npp']) ? trim($row['npp']) : null,
                         'gaji_pokok_tunjangan_tetap'    => !empty($row['gaji_pokok_tunjangan_tetap']) ? trim($row['gaji_pokok_tunjangan_tetap']) : null,
-                        'kewarganegaraan_bpjs'          => !empty($row['kewarganegaraan_bpjs']) ? trim($row['kewarganegaraan_bpjs']) : null,
+                        'kewarganegaraan_bpjs'          => !empty($row['kewarganegaraan_bpjs']) ? trim($row['kewarganegaraan_bpjs']) : '1 = WNI',
                         'sub_cabang'                    => !empty($row['sub_cabang']) ? trim($row['sub_cabang']) : null,
                         'catatan'                       => !empty($row['catatan']) ? trim($row['catatan']) : null,
                     ]);
+
+                    // Sync contracts 1 to 10 if provided in import row
+                    if (!empty($row['contracts']) && is_array($row['contracts'])) {
+                        foreach ($row['contracts'] as $c) {
+                            if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
+                                $cStart = $parseDate($c['tanggal_mulai']);
+                                $cEnd = $parseDate($c['tanggal_selesai']);
+                                if ($cStart && $cEnd) {
+                                    $diffM = (int) max(1, ceil(abs(strtotime($cEnd) - strtotime($cStart)) / (30 * 86400)));
+                                    ContractHistory::create([
+                                        'employee_id'        => $newEmployee->id,
+                                        'kontrak_ke'         => (int) ($c['kontrak_ke'] ?? 1),
+                                        'tanggal_mulai'      => $cStart,
+                                        'tanggal_selesai'    => $cEnd,
+                                        'masa_kontrak_bulan' => !empty($c['masa_kontrak_bulan']) ? (int) $c['masa_kontrak_bulan'] : $diffM,
+                                        'diserahkan'         => !empty($c['diserahkan']) ? trim($c['diserahkan']) : null,
+                                        'catatan'            => !empty($c['catatan']) ? trim($c['catatan']) : null,
+                                    ]);
+                                }
+                            }
+                        }
+                    }
 
                     $currentEmployee = $newEmployee;
                     $importedEmployees++;
@@ -654,6 +676,7 @@ class EmployeeApiController extends Controller
             'tanggal_selesai'    => 'required|date|after:tanggal_mulai',
             'masa_kontrak_bulan' => 'required|integer|min:1',
             'catatan'            => 'nullable|string',
+            'diserahkan'         => 'nullable|string|max:50',
             'sk_file'            => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
         ]);
 
