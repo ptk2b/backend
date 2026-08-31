@@ -113,7 +113,7 @@ class EmployeeApiController extends Controller
     /**
      * Show single employee with contract histories and families.
      */
-    public function show(int $id): JsonResponse
+    public function show($id): JsonResponse
     {
         $employee = Employee::with(['contractHistories', 'families'])->findOrFail($id);
         return response()->json($employee);
@@ -240,7 +240,7 @@ class EmployeeApiController extends Controller
     /**
      * Update employee.
      */
-    public function update(Request $request, int $id): JsonResponse
+    public function update(Request $request, $id): JsonResponse
     {
         $employee = Employee::findOrFail($id);
 
@@ -363,7 +363,7 @@ class EmployeeApiController extends Controller
     /**
      * Delete employee.
      */
-    public function destroy(int $id): JsonResponse
+    public function destroy($id): JsonResponse
     {
         $employee = Employee::findOrFail($id);
 
@@ -650,7 +650,7 @@ class EmployeeApiController extends Controller
     // FAMILY CRUD
     // ============================
 
-    public function storeFamily(Request $request, int $employeeId): JsonResponse
+    public function storeFamily(Request $request, $employeeId): JsonResponse
     {
         $employee = Employee::findOrFail($employeeId);
 
@@ -682,7 +682,7 @@ class EmployeeApiController extends Controller
         return response()->json($family, 201);
     }
 
-    public function updateFamily(Request $request, int $id): JsonResponse
+    public function updateFamily(Request $request, $id): JsonResponse
     {
         $family = EmployeeFamily::findOrFail($id);
 
@@ -711,7 +711,7 @@ class EmployeeApiController extends Controller
         return response()->json($family);
     }
 
-    public function destroyFamily(int $id): JsonResponse
+    public function destroyFamily($id): JsonResponse
     {
         $family = EmployeeFamily::findOrFail($id);
         $family->delete();
@@ -723,7 +723,7 @@ class EmployeeApiController extends Controller
     // CONTRACT HISTORY
     // ============================
 
-    public function addContract(Request $request, int $id): JsonResponse
+    public function addContract(Request $request, $id): JsonResponse
     {
         $employee = Employee::findOrFail($id);
 

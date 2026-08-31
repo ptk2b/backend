@@ -75,6 +75,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Man Power / Employees (hidden page)
     Route::get('/admin/employees/stats', [EmployeeApiController::class, 'stats']);
     Route::get('/admin/employees/expiring', [EmployeeApiController::class, 'expiring']);
+    Route::get('/admin/employees/expiring-contracts', [EmployeeApiController::class, 'expiring']);
     Route::get('/admin/employees/positions', [EmployeeApiController::class, 'positions']);
     Route::get('/admin/employees/export', [EmployeeApiController::class, 'export']);
     Route::get('/admin/employees/import-template', [EmployeeApiController::class, 'importTemplate']);
@@ -83,15 +84,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('/admin/employees/import-batch', [EmployeeApiController::class, 'importBatch']);
     Route::get('/admin/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
     Route::get('/admin/employees', [EmployeeApiController::class, 'index']);
-    Route::get('/admin/employees/{id}', [EmployeeApiController::class, 'show']);
+    Route::get('/admin/employees/{id}', [EmployeeApiController::class, 'show'])->whereNumber('id');
     Route::post('/admin/employees', [EmployeeApiController::class, 'store']);
-    Route::post('/admin/employees/{id}', [EmployeeApiController::class, 'update']);
-    Route::delete('/admin/employees/{id}', [EmployeeApiController::class, 'destroy']);
-    Route::post('/admin/employees/{id}/contracts', [EmployeeApiController::class, 'addContract']);
-    Route::delete('/admin/contracts/{id}', [EmployeeApiController::class, 'deleteContract']);
-    Route::post('/admin/employees/{id}/families', [EmployeeApiController::class, 'storeFamily']);
-    Route::put('/admin/families/{id}', [EmployeeApiController::class, 'updateFamily']);
-    Route::delete('/admin/families/{id}', [EmployeeApiController::class, 'destroyFamily']);
+    Route::post('/admin/employees/{id}', [EmployeeApiController::class, 'update'])->whereNumber('id');
+    Route::delete('/admin/employees/{id}', [EmployeeApiController::class, 'destroy'])->whereNumber('id');
+    Route::post('/admin/employees/{id}/contracts', [EmployeeApiController::class, 'addContract'])->whereNumber('id');
+    Route::delete('/admin/contracts/{id}', [EmployeeApiController::class, 'deleteContract'])->whereNumber('id');
+    Route::post('/admin/employees/{id}/families', [EmployeeApiController::class, 'storeFamily'])->whereNumber('id');
+    Route::put('/admin/families/{id}', [EmployeeApiController::class, 'updateFamily'])->whereNumber('id');
+    Route::delete('/admin/families/{id}', [EmployeeApiController::class, 'destroyFamily'])->whereNumber('id');
 
     // Departments (dropdown options)
     Route::get('/admin/departments', [EmployeeApiController::class, 'departments']);
