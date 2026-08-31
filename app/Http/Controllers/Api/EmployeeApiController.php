@@ -85,6 +85,7 @@ class EmployeeApiController extends Controller
         $nonActive = Employee::where('status_karyawan', 'NON ACTIVE')->count();
         $pkwt = Employee::where('status_hubungan_kerja', 'PKWT')->count();
         $pkwtt = Employee::where('status_hubungan_kerja', 'PKWTT')->count();
+        $skpkt = Employee::where('status_hubungan_kerja', 'SKPKT')->count();
 
         return response()->json([
             'total'      => $total,
@@ -92,6 +93,7 @@ class EmployeeApiController extends Controller
             'non_active' => $nonActive,
             'pkwt'       => $pkwt,
             'pkwtt'      => $pkwtt,
+            'skpkt'      => $skpkt,
         ]);
     }
 
