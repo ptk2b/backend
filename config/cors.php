@@ -19,11 +19,14 @@ return [
 
     'allowed_methods' => ['*'],
 
-    'allowed_origins' => [
+    'allowed_origins' => array_filter([
         'http://localhost:3000',
+        'http://localhost:8000',
         'https://ptk2b.com',
         'https://www.ptk2b.com',
-    ],
+        env('FRONTEND_URL'),
+        env('APP_URL'),
+    ]),
 
     'allowed_origins_patterns' => [
         '#^https://.*\.vercel\.app$#',
