@@ -210,6 +210,7 @@ class EmployeeApiController extends Controller
         if (!empty($rawContracts)) {
             $contractsArray = is_string($rawContracts) ? json_decode($rawContracts, true) : $rawContracts;
             if (is_array($contractsArray)) {
+                $hasDiserahkanCol = Schema::hasColumn('contract_histories', 'diserahkan');
                 foreach ($contractsArray as $c) {
                     if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
                         $kNum = intval($c['kontrak_ke'] ?? 1);
@@ -220,15 +221,24 @@ class EmployeeApiController extends Controller
                         } catch (\Exception $ex) {
                             $diffMonths = 12;
                         }
-                        ContractHistory::updateOrCreate(
-                            ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
-                            [
-                                'tanggal_mulai'      => $c['tanggal_mulai'],
-                                'tanggal_selesai'    => $c['tanggal_selesai'],
-                                'masa_kontrak_bulan' => $diffMonths,
-                                'diserahkan'         => $c['diserahkan'] ?? 'Sudah',
-                            ]
-                        );
+
+                        $cData = [
+                            'tanggal_mulai'      => $c['tanggal_mulai'],
+                            'tanggal_selesai'    => $c['tanggal_selesai'],
+                            'masa_kontrak_bulan' => $diffMonths,
+                        ];
+                        if ($hasDiserahkanCol) {
+                            $cData['diserahkan'] = $c['diserahkan'] ?? 'Sudah';
+                        }
+
+                        try {
+                            ContractHistory::updateOrCreate(
+                                ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
+                                $cData
+                            );
+                        } catch (\Exception $ex) {
+                            \Log::error("Failed saving contract history: " . $ex->getMessage());
+                        }
                     }
                 }
             }
@@ -333,6 +343,7 @@ class EmployeeApiController extends Controller
         if (!empty($rawContracts)) {
             $contractsArray = is_string($rawContracts) ? json_decode($rawContracts, true) : $rawContracts;
             if (is_array($contractsArray)) {
+                $hasDiserahkanCol = Schema::hasColumn('contract_histories', 'diserahkan');
                 foreach ($contractsArray as $c) {
                     if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
                         $kNum = intval($c['kontrak_ke'] ?? 1);
@@ -343,15 +354,24 @@ class EmployeeApiController extends Controller
                         } catch (\Exception $ex) {
                             $diffMonths = 12;
                         }
-                        ContractHistory::updateOrCreate(
-                            ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
-                            [
-                                'tanggal_mulai'      => $c['tanggal_mulai'],
-                                'tanggal_selesai'    => $c['tanggal_selesai'],
-                                'masa_kontrak_bulan' => $diffMonths,
-                                'diserahkan'         => $c['diserahkan'] ?? 'Sudah',
-                            ]
-                        );
+
+                        $cData = [
+                            'tanggal_mulai'      => $c['tanggal_mulai'],
+                            'tanggal_selesai'    => $c['tanggal_selesai'],
+                            'masa_kontrak_bulan' => $diffMonths,
+                        ];
+                        if ($hasDiserahkanCol) {
+                            $cData['diserahkan'] = $c['diserahkan'] ?? 'Sudah';
+                        }
+
+                        try {
+                            ContractHistory::updateOrCreate(
+                                ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
+                                $cData
+                            );
+                        } catch (\Exception $ex) {
+                            \Log::error("Failed saving contract history: " . $ex->getMessage());
+                        }
                     }
                 }
             }
