@@ -24,7 +24,7 @@ class EmployeeApiController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Employee::withCount('families')->with('families');
+        $query = Employee::withCount('families')->with(['families', 'contractHistories']);
 
         // Search by nama_lengkap, nip, nik, jabatan, departemen, email, no_telp
         if ($search = $request->input('search')) {
