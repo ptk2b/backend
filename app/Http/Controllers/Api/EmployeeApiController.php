@@ -206,7 +206,35 @@ class EmployeeApiController extends Controller
 
         $employee = Employee::create($data);
 
-        return response()->json($employee, 201);
+        $rawContracts = $request->input('contracts');
+        if (!empty($rawContracts)) {
+            $contractsArray = is_string($rawContracts) ? json_decode($rawContracts, true) : $rawContracts;
+            if (is_array($contractsArray)) {
+                foreach ($contractsArray as $c) {
+                    if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
+                        $kNum = intval($c['kontrak_ke'] ?? 1);
+                        try {
+                            $start = Carbon::parse($c['tanggal_mulai']);
+                            $end = Carbon::parse($c['tanggal_selesai']);
+                            $diffMonths = max(1, $start->diffInMonths($end));
+                        } catch (\Exception $ex) {
+                            $diffMonths = 12;
+                        }
+                        ContractHistory::updateOrCreate(
+                            ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
+                            [
+                                'tanggal_mulai'      => $c['tanggal_mulai'],
+                                'tanggal_selesai'    => $c['tanggal_selesai'],
+                                'masa_kontrak_bulan' => $diffMonths,
+                                'diserahkan'         => $c['diserahkan'] ?? 'Sudah',
+                            ]
+                        );
+                    }
+                }
+            }
+        }
+
+        return response()->json($employee->load(['contractHistories', 'families']), 201);
     }
 
     /**
@@ -258,7 +286,7 @@ class EmployeeApiController extends Controller
             'kabupaten'                     => 'nullable|string|max:150',
             'provinsi'                      => 'nullable|string|max:150',
             'kode_pos'                      => 'nullable|string|max:20',
-            'domisili'                      => 'nullable|string|max:255',
+            'domisili'                      => 'nullable|string|max:150',
             'nama_ayah'                     => 'nullable|string|max:255',
             'nama_ibu'                      => 'nullable|string|max:255',
             'nomor_bpjstk'                  => 'nullable|string|max:100',
@@ -271,12 +299,12 @@ class EmployeeApiController extends Controller
             'nama_faskes_tk_1'              => 'nullable|string|max:255',
             'kode_faskes_dokter_gigi'       => 'nullable|string|max:100',
             'nama_faskes_dokter_gigi'       => 'nullable|string|max:255',
-            'nomor_telepon_rumus'           => 'nullable|string|max:100',
+            'nomor_telepon_rumus'           => 'nullable|string|max:50',
             'email_rumus'                   => 'nullable|string|max:255',
             'npp'                           => 'nullable|string|max:100',
             'gaji_pokok_tunjangan_tetap'    => 'nullable|string|max:100',
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
-            'sub_cabang'                    => 'nullable|string|max:150',
+            'sub_cabang'                    => 'nullable|string|max:100',
             'catatan'                       => 'nullable|string',
             'sk_file'                       => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
         ]);
@@ -301,7 +329,35 @@ class EmployeeApiController extends Controller
 
         $employee->update($data);
 
-        return response()->json($employee);
+        $rawContracts = $request->input('contracts');
+        if (!empty($rawContracts)) {
+            $contractsArray = is_string($rawContracts) ? json_decode($rawContracts, true) : $rawContracts;
+            if (is_array($contractsArray)) {
+                foreach ($contractsArray as $c) {
+                    if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
+                        $kNum = intval($c['kontrak_ke'] ?? 1);
+                        try {
+                            $start = Carbon::parse($c['tanggal_mulai']);
+                            $end = Carbon::parse($c['tanggal_selesai']);
+                            $diffMonths = max(1, $start->diffInMonths($end));
+                        } catch (\Exception $ex) {
+                            $diffMonths = 12;
+                        }
+                        ContractHistory::updateOrCreate(
+                            ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
+                            [
+                                'tanggal_mulai'      => $c['tanggal_mulai'],
+                                'tanggal_selesai'    => $c['tanggal_selesai'],
+                                'masa_kontrak_bulan' => $diffMonths,
+                                'diserahkan'         => $c['diserahkan'] ?? 'Sudah',
+                            ]
+                        );
+                    }
+                }
+            }
+        }
+
+        return response()->json($employee->load(['contractHistories', 'families']));
     }
 
     /**
