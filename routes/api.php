@@ -98,8 +98,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/employees/positions', [EmployeeApiController::class, 'positions']);
     Route::get('/admin/employees/export', [EmployeeApiController::class, 'export']);
     Route::get('/admin/employees/import-template', [EmployeeApiController::class, 'importTemplate']);
-    Route::post('/admin/employees/import-preview', [EmployeeApiController::class, 'importPreview']);
-    Route::post('/admin/employees/import', [EmployeeApiController::class, 'importExecute']);
     Route::post('/admin/employees/import-batch', [EmployeeApiController::class, 'importBatch']);
     Route::get('/admin/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
     Route::get('/admin/employees', [EmployeeApiController::class, 'index']);

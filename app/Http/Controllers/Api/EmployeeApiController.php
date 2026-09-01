@@ -574,7 +574,7 @@ class EmployeeApiController extends Controller
                     || str_contains($statusKarRaw, 'OFF');
 
                 $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
-                $statusHub = str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT';
+                $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
 
                 try {
                     $newEmployee = Employee::create([
