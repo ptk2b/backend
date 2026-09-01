@@ -126,7 +126,14 @@ class EmployeeApiController extends Controller
      */
     public function store(Request $request): JsonResponse
     {
-        $validator = Validator::make($request->all(), [
+        $input = $request->all();
+        foreach (['in', 'outtoday', 'tanggal_lahir', 'tanggal_perkawinan_perceraian', 'usia'] as $f) {
+            if (isset($input[$f]) && ($input[$f] === '' || $input[$f] === 'null')) {
+                $input[$f] = null;
+            }
+        }
+
+        $validator = Validator::make($input, [
             'nama_lengkap'                  => 'required|string|max:255',
             'nip'                           => 'nullable|string|max:100',
             'nik'                           => 'nullable|string|max:100',
@@ -256,7 +263,14 @@ class EmployeeApiController extends Controller
     {
         $employee = Employee::findOrFail($id);
 
-        $validator = Validator::make($request->all(), [
+        $input = $request->all();
+        foreach (['in', 'outtoday', 'tanggal_lahir', 'tanggal_perkawinan_perceraian', 'usia'] as $f) {
+            if (isset($input[$f]) && ($input[$f] === '' || $input[$f] === 'null')) {
+                $input[$f] = null;
+            }
+        }
+
+        $validator = Validator::make($input, [
             'nama_lengkap'                  => 'required|string|max:255',
             'nip'                           => 'nullable|string|max:100',
             'nik'                           => 'nullable|string|max:100',
