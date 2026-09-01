@@ -45,6 +45,9 @@ Route::get('/careers', [CareerApiController::class, 'index']);
 Route::get('/careers/cv/{filename}', [CareerApiController::class, 'downloadCv']);
 Route::get('/careers/{id}', [CareerApiController::class, 'show']);
 Route::get('/structure', [OrgStructureApiController::class, 'index']);
+Route::get('/employees/{id}/sk', [EmployeeApiController::class, 'downloadEmployeeSk'])->whereNumber('id');
+Route::get('/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
+Route::get('/contracts/{id}/sk', [EmployeeApiController::class, 'downloadContractSk'])->whereNumber('id');
 
 // ===== RATE-LIMITED PUBLIC FORM ENDPOINTS =====
 Route::middleware('throttle:10,1')->group(function () {

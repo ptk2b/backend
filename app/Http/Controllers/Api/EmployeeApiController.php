@@ -797,19 +797,89 @@ class EmployeeApiController extends Controller
     }
 
     // ============================
-    // SK FILE DOWNLOAD
+    // SK FILE DOWNLOAD & PREVIEW (CPanel & Vercel Friendly)
     // ============================
 
-    public function downloadSk(string $filename)
+    public function downloadEmployeeSk(Request $request, $id)
     {
-        foreach (['employee-sk', 'contract-sk'] as $dir) {
-            $path = "{$dir}/{$filename}";
-            if (Storage::disk('public')->exists($path)) {
-                return Storage::disk('public')->download($path, $filename);
+        $employee = Employee::findOrFail($id);
+        if (!$employee->sk_path) {
+            abort(404, 'Karyawan ini belum memiliki lampiran SK.');
+        }
+        return $this->serveSkFile($request, $employee->sk_path, basename($employee->sk_path));
+    }
+
+    public function downloadContractSk(Request $request, $id)
+    {
+        $contract = ContractHistory::findOrFail($id);
+        if (!$contract->sk_path) {
+            abort(404, 'Kontrak ini belum memiliki lampiran SK.');
+        }
+        return $this->serveSkFile($request, $contract->sk_path, basename($contract->sk_path));
+    }
+
+    public function downloadSk(Request $request, string $filename)
+    {
+        $rawFilename = basename($filename);
+        $decoded = urldecode($rawFilename);
+
+        $candidates = array_unique([$rawFilename, $decoded]);
+        foreach ($candidates as $cand) {
+            foreach (['employee-sk', 'contract-sk', 'sk', 'uploads/sk'] as $dir) {
+                $relPath = "{$dir}/{$cand}";
+                if (Storage::disk('public')->exists($relPath)) {
+                    return $this->serveSkFile($request, $relPath, $cand);
+                }
             }
         }
 
-        abort(404, 'File SK tidak ditemukan');
+        // Search in possible cPanel paths
+        $searchDirs = [
+            storage_path('app/public/employee-sk'),
+            storage_path('app/public/contract-sk'),
+            public_path('storage/employee-sk'),
+            public_path('storage/contract-sk'),
+            base_path('../public_html/storage/employee-sk'),
+            base_path('../public_html/storage/contract-sk'),
+        ];
+
+        foreach ($searchDirs as $sDir) {
+            if (!file_exists($sDir)) continue;
+            foreach ($candidates as $cand) {
+                $full = rtrim($sDir, '/\\') . DIRECTORY_SEPARATOR . $cand;
+                if (file_exists($full) && is_file($full)) {
+                    return $this->streamLocalFile($request, $full, $cand);
+                }
+            }
+        }
+
+        abort(404, 'File SK tidak ditemukan di server.');
+    }
+
+    private function serveSkFile(Request $request, string $storagePath, string $filename)
+    {
+        if (Storage::disk('public')->exists($storagePath)) {
+            $fullPath = Storage::disk('public')->path($storagePath);
+            if (file_exists($fullPath)) {
+                return $this->streamLocalFile($request, $fullPath, $filename);
+            }
+            return Storage::disk('public')->response($storagePath, $filename);
+        }
+
+        abort(404, 'Berkas fisik SK tidak ditemukan.');
+    }
+
+    private function streamLocalFile(Request $request, string $filePath, string $filename)
+    {
+        $mime = mime_content_type($filePath) ?: 'application/octet-stream';
+        $disposition = $request->query('download') === '1' ? 'attachment' : 'inline';
+
+        return response()->file($filePath, [
+            'Content-Type'        => $mime,
+            'Content-Disposition' => "{$disposition}; filename=\"{$filename}\"",
+            'Access-Control-Allow-Origin' => '*',
+            'Cache-Control'       => 'public, max-age=86400',
+        ]);
     }
 
     // ============================
