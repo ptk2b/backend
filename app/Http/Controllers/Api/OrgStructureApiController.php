@@ -44,6 +44,13 @@ class OrgStructureApiController extends Controller
      */
     public function adminIndex(Request $request): JsonResponse
     {
+        // Auto-seed default initial positions if table is completely empty
+        if (OrgStructure::count() === 0 && ! $request->has('empty')) {
+            foreach ($this->getDefaultSeedData() as $item) {
+                OrgStructure::create($item);
+            }
+        }
+
         $structures = OrgStructure::orderBy('level', 'asc')
             ->orderBy('sort_order', 'asc')
             ->orderBy('id', 'asc')
@@ -181,7 +188,17 @@ class OrgStructureApiController extends Controller
      */
     public function destroy($id): JsonResponse
     {
-        $structure = OrgStructure::findOrFail($id);
+        $structure = OrgStructure::find($id);
+
+        if (! $structure) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Posisi tidak ditemukan atau sudah dihapus',
+            ], 404);
+        }
+
+        // Reassign subordinate members to top level (null) so they aren't orphaned or blocked
+        OrgStructure::where('parent_id', $id)->update(['parent_id' => null]);
 
         if ($structure->photo_path && File::exists(public_path($structure->photo_path))) {
             File::delete(public_path($structure->photo_path));

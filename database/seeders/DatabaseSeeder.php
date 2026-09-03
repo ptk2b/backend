@@ -19,6 +19,7 @@ class DatabaseSeeder extends Seeder
             AdminSeeder::class,
             SiteContentSeeder::class,
             CareerSeeder::class,
+            OrgStructureSeeder::class,
         ]);
     }
 }
