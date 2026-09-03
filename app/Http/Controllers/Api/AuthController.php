@@ -28,9 +28,7 @@ class AuthController extends Controller
             ]);
         }
 
-        // Revoke existing tokens
-        $user->tokens()->delete();
-
+        // Allow concurrent multi-device logins (do not delete existing tokens)
         $token = $user->createToken('admin-token')->plainTextToken;
 
         return response()->json([
