@@ -23,11 +23,6 @@ class OrgStructureApiController extends Controller
             ->orderBy('id', 'asc')
             ->get();
 
-        // If empty, return initial fallback seed items so UI looks populated immediately
-        if ($structures->isEmpty()) {
-            $structures = collect($this->getDefaultSeedData());
-        }
-
         // Distinct divisions for filtering
         $divisions = $structures->pluck('division')->unique()->values();
 
@@ -44,13 +39,6 @@ class OrgStructureApiController extends Controller
      */
     public function adminIndex(Request $request): JsonResponse
     {
-        // Auto-seed default initial positions if table is completely empty
-        if (OrgStructure::count() === 0 && ! $request->has('empty')) {
-            foreach ($this->getDefaultSeedData() as $item) {
-                OrgStructure::create($item);
-            }
-        }
-
         $structures = OrgStructure::orderBy('level', 'asc')
             ->orderBy('sort_order', 'asc')
             ->orderBy('id', 'asc')
