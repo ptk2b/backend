@@ -78,11 +78,41 @@ class MemoApiController extends Controller
         return response()->json(['message' => 'Memo berhasil dihapus.']);
     }
 
-    public function download(int $id): BinaryFileResponse
+    public function download(Request $request, int $id)
     {
         $memo = Memo::findOrFail($id);
-        $path = Storage::disk('public')->path($memo->file_path);
+        
+        $path = null;
+        if (Storage::disk('public')->exists($memo->file_path)) {
+            $path = Storage::disk('public')->path($memo->file_path);
+        } elseif (file_exists(storage_path('app/public/' . $memo->file_path))) {
+            $path = storage_path('app/public/' . $memo->file_path);
+        } elseif (file_exists(storage_path('app/' . $memo->file_path))) {
+            $path = storage_path('app/' . $memo->file_path);
+        }
 
-        return response()->download($path, $memo->file_name);
+        if (!$path || !file_exists($path)) {
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Dokumen memo tidak ditemukan di server.',
+            ], 404);
+        }
+
+        $filename = $memo->file_name ?: basename($path);
+
+        if ($request->boolean('download') || $request->query('dl') === '1') {
+            return response()->download($path, $filename, [
+                'Content-Type'                => 'application/pdf',
+                'Access-Control-Allow-Origin' => '*',
+            ]);
+        }
+
+        return response()->file($path, [
+            'Content-Type'                => 'application/pdf',
+            'Content-Disposition'         => 'inline; filename="' . $filename . '"',
+            'Access-Control-Allow-Origin' => '*',
+            'Cache-Control'               => 'public, max-age=86400',
+            'X-Content-Type-Options'      => 'nosniff',
+        ]);
     }
 }
