@@ -369,29 +369,36 @@ class CareerApiController extends Controller
         $webhookUrl = env('GOOGLE_SHEETS_WEBHOOK_URL', 'https://script.google.com/macros/s/AKfycbyxm5dFSoXqMYNYCfFNHRsitwHbRztFcqDmkgPXY7qCA4Ut5lKxVgiwqu-uRk7NIS5H/exec');
         if (!empty($webhookUrl)) {
             try {
-                \Illuminate\Support\Facades\Http::withoutVerifying()->timeout(10)->post($webhookUrl, [
-                    'tanggal_masuk'       => now()->format('d/m/Y H:i'),
-                    'nama'                => $request->name,
-                    'email'               => $request->email,
-                    'umur'                => $calculatedUmur,
-                    'tempat_lahir'        => $tempatLahir,
-                    'tanggal_lahir'       => $tanggalLahir,
-                    'nomor_hp'            => $request->phone ?? '',
-                    'phone'               => $request->phone ?? '',
-                    'alamat_domisili'     => $alamatDomisili,
-                    'pendidikan_terakhir' => $pendidikanTerakhir,
-                    'nama_lembaga'        => $namaLembaga,
-                    'sertifikasi'         => $sertifikasi,
-                    'pengalaman_terakhir' => $pengalamanTerakhir,
-                    'jabatan_terakhir'    => $jabatanTerakhir,
-                    'masa_kerja'          => $masaKerja,
-                    'jabatan_dilamar'     => $careerTitle,
-                    'rekomendasi'         => $rekomendasi,
-                    'surat_lamaran'       => $request->cover_letter ?? '',
-                    'cover_letter'        => $request->cover_letter ?? '',
-                    'cv_url'              => $cvDownloadUrl ?? '',
-                    'cv_nama_file'        => $originalFilename ?? '',
-                ]);
+                $response = \Illuminate\Support\Facades\Http::withoutVerifying()
+                    ->timeout(30)
+                    ->asJson()
+                    ->post($webhookUrl, [
+                        'tanggal_masuk'       => now()->format('d/m/Y H:i'),
+                        'nama'                => (string) ($request->name ?? ''),
+                        'email'               => (string) ($request->email ?? ''),
+                        'umur'                => (string) ($calculatedUmur ?? ''),
+                        'tempat_lahir'        => (string) ($tempatLahir ?? ''),
+                        'tanggal_lahir'       => (string) ($tanggalLahir ?? ''),
+                        'nomor_hp'            => (string) ($request->phone ?? ''),
+                        'phone'               => (string) ($request->phone ?? ''),
+                        'alamat_domisili'     => (string) ($alamatDomisili ?? ''),
+                        'pendidikan_terakhir' => (string) ($pendidikanTerakhir ?? ''),
+                        'nama_lembaga'        => (string) ($namaLembaga ?? ''),
+                        'sertifikasi'         => (string) ($sertifikasi ?? ''),
+                        'pengalaman_terakhir' => (string) ($pengalamanTerakhir ?? ''),
+                        'jabatan_terakhir'    => (string) ($jabatanTerakhir ?? ''),
+                        'masa_kerja'          => (string) ($masaKerja ?? ''),
+                        'jabatan_dilamar'     => (string) ($careerTitle ?? 'Lowongan Umum'),
+                        'rekomendasi'         => (string) ($rekomendasi ?? ''),
+                        'surat_lamaran'       => (string) ($request->cover_letter ?? ''),
+                        'cover_letter'        => (string) ($request->cover_letter ?? ''),
+                        'cv_url'              => (string) ($cvDownloadUrl ?? ''),
+                        'cv_nama_file'        => (string) ($originalFilename ?? ''),
+                    ]);
+
+                if (!$response->successful()) {
+                    Log::warning('Google Sheets Webhook returned status ' . $response->status() . ': ' . substr($response->body(), 0, 200));
+                }
             } catch (\Throwable $e) {
                 Log::warning('Google Sheets Webhook error: ' . $e->getMessage());
             }
@@ -499,6 +506,9 @@ class CareerApiController extends Controller
                   . "<p style=\"font-size:12px;color:#777;\">Dikirim dari Form Karir <a href=\"https://www.ptk2b.com/karir\">https://www.ptk2b.com/karir</a> pada " . now()->format('d M Y H:i:s T') . "</p>";
 
         if (!empty($mailPassword)) {
+            $emailSent = false;
+
+            // Tier 1: Try EsmtpTransport with CV attachment
             try {
                 $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport($mailHost, $mailPort, true);
                 $transport->setUsername($mailUsername);
@@ -518,31 +528,55 @@ class CareerApiController extends Controller
                 }
 
                 $mailer->send($emailMessage);
+                $emailSent = true;
             } catch (\Throwable $e) {
-                Log::warning('Career apply EsmtpTransport delivery error: ' . $e->getMessage());
+                Log::warning('Career apply Tier 1 (with attachment) error: ' . $e->getMessage());
 
+                // Tier 2: Retry EsmtpTransport WITHOUT attachment (prevents SMTP timeout on large files)
                 try {
-                    \Illuminate\Support\Facades\Mail::html($bodyHtml, function ($mail) use ($destinationEmail, $request, $careerTitle, $mailUsername, $actualCvFile, $originalFilename) {
+                    $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport($mailHost, $mailPort, true);
+                    $transport->setUsername($mailUsername);
+                    $transport->setPassword($mailPassword);
+
+                    $mailer = new \Symfony\Component\Mailer\Mailer($transport);
+                    $emailMessageNoAtt = (new \Symfony\Component\Mime\Email())
+                        ->from("\"PT. Karya Kembar Bersama\" <{$mailUsername}>")
+                        ->to($destinationEmail)
+                        ->replyTo("\"{$request->name}\" <{$request->email}>")
+                        ->subject("Lamaran Kerja: {$careerTitle} — dari {$request->name}")
+                        ->html($bodyHtml)
+                        ->text($bodyText);
+
+                    $mailer->send($emailMessageNoAtt);
+                    $emailSent = true;
+                    Log::info('Career apply Tier 2 (without attachment, direct link used) succeeded.');
+                } catch (\Throwable $e2) {
+                    Log::warning('Career apply Tier 2 error: ' . $e2->getMessage());
+                }
+            }
+
+            // Tier 3: Laravel Mail facade fallback
+            if (!$emailSent) {
+                try {
+                    \Illuminate\Support\Facades\Mail::html($bodyHtml, function ($mail) use ($destinationEmail, $request, $careerTitle, $mailUsername) {
                         $mail->from($mailUsername, 'PT. Karya Kembar Bersama')
                              ->to($destinationEmail)
                              ->replyTo($request->email, $request->name)
                              ->subject("Lamaran Kerja: {$careerTitle} — dari {$request->name}");
-
-                        if ($actualCvFile && file_exists($actualCvFile)) {
-                            $mail->attach($actualCvFile, ['as' => $originalFilename ?? 'CV.pdf', 'mime' => 'application/pdf']);
-                        }
                     });
-                } catch (\Throwable $e2) {
-                    Log::warning('Career apply Mail facade error: ' . $e2->getMessage());
+                    $emailSent = true;
+                } catch (\Throwable $e3) {
+                    Log::warning('Career apply Tier 3 (Mail facade) error: ' . $e3->getMessage());
 
+                    // Tier 4: Native PHP mail() fallback
                     try {
                         $headers = "From: PT. Karya Kembar Bersama <{$mailUsername}>\r\n" .
                                    "Reply-To: {$request->name} <{$request->email}>\r\n" .
                                    "X-Mailer: PHP/" . phpversion() . "\r\n" .
                                    "Content-Type: text/html; charset=UTF-8\r\n";
                         @mail($destinationEmail, "Lamaran Kerja: {$careerTitle} — dari {$request->name}", $bodyHtml, $headers);
-                    } catch (\Throwable $e3) {
-                        Log::warning('Career apply native mail error: ' . $e3->getMessage());
+                    } catch (\Throwable $e4) {
+                        Log::warning('Career apply Tier 4 (native mail) error: ' . $e4->getMessage());
                     }
                 }
             }
