@@ -8,7 +8,29 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (Schema::hasTable('career_applications')) {
+        if (!Schema::hasTable('career_applications')) {
+            Schema::create('career_applications', function (Blueprint $table) {
+                $table->id();
+                $table->unsignedBigInteger('career_id')->nullable();
+                $table->string('career_title')->nullable();
+                $table->string('name');
+                $table->string('email');
+                $table->string('phone', 30)->nullable();
+                $table->string('tempat_lahir')->nullable();
+                $table->string('tanggal_lahir')->nullable();
+                $table->text('alamat_domisili')->nullable();
+                $table->string('pendidikan_terakhir')->nullable();
+                $table->string('nama_lembaga')->nullable();
+                $table->text('sertifikasi')->nullable();
+                $table->string('pengalaman_terakhir')->nullable();
+                $table->string('jabatan_terakhir')->nullable();
+                $table->string('masa_kerja')->nullable();
+                $table->string('rekomendasi')->nullable();
+                $table->text('cover_letter')->nullable();
+                $table->string('cv_path')->nullable();
+                $table->timestamps();
+            });
+        } else {
             Schema::table('career_applications', function (Blueprint $table) {
                 if (!Schema::hasColumn('career_applications', 'tempat_lahir')) {
                     $table->string('tempat_lahir')->nullable()->after('phone');

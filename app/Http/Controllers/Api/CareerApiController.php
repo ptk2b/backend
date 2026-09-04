@@ -404,11 +404,36 @@ class CareerApiController extends Controller
             }
         }
 
-        // Store application in database (safe try-catch)
+        // Store application in database (safe try-catch with dual fallback)
         $application = null;
         try {
-            if (Schema::hasTable('career_applications')) {
-                $applicationData = [
+            $applicationData = [
+                'career_id'           => is_numeric($request->career_id) ? (int)$request->career_id : null,
+                'career_title'        => $careerTitle,
+                'name'                => $request->name,
+                'email'               => $request->email,
+                'phone'               => $request->phone,
+                'tempat_lahir'        => $tempatLahir,
+                'tanggal_lahir'       => $tanggalLahir,
+                'alamat_domisili'     => $alamatDomisili,
+                'pendidikan_terakhir' => $pendidikanTerakhir,
+                'nama_lembaga'        => $namaLembaga,
+                'sertifikasi'         => $sertifikasi,
+                'pengalaman_terakhir' => $pengalamanTerakhir,
+                'jabatan_terakhir'    => $jabatanTerakhir,
+                'masa_kerja'          => $masaKerja,
+                'rekomendasi'         => $rekomendasi,
+                'cover_letter'        => $request->cover_letter,
+                'cv_path'             => $cvPath,
+            ];
+
+            $application = CareerApplication::create($applicationData);
+        } catch (\Throwable $e) {
+            Log::warning('Career application DB store expanded error: ' . $e->getMessage());
+
+            // Fallback for older table schema (basic columns only)
+            try {
+                $basicData = [
                     'career_id'    => is_numeric($request->career_id) ? (int)$request->career_id : null,
                     'career_title' => $careerTitle,
                     'name'         => $request->name,
@@ -417,31 +442,10 @@ class CareerApiController extends Controller
                     'cover_letter' => $request->cover_letter,
                     'cv_path'      => $cvPath,
                 ];
-
-                // Dynamically append new columns if present in DB schema
-                $columns = Schema::getColumnListing('career_applications');
-                $extraData = [
-                    'tempat_lahir'        => $tempatLahir,
-                    'tanggal_lahir'       => $tanggalLahir,
-                    'alamat_domisili'     => $alamatDomisili,
-                    'pendidikan_terakhir' => $pendidikanTerakhir,
-                    'nama_lembaga'        => $namaLembaga,
-                    'sertifikasi'         => $sertifikasi,
-                    'pengalaman_terakhir' => $pengalamanTerakhir,
-                    'jabatan_terakhir'    => $jabatanTerakhir,
-                    'masa_kerja'          => $masaKerja,
-                    'rekomendasi'         => $rekomendasi,
-                ];
-                foreach ($extraData as $col => $val) {
-                    if (in_array($col, $columns)) {
-                        $applicationData[$col] = $val;
-                    }
-                }
-
-                $application = CareerApplication::create($applicationData);
+                $application = CareerApplication::create($basicData);
+            } catch (\Throwable $e2) {
+                Log::error('Career application DB store fatal error: ' . $e2->getMessage());
             }
-        } catch (\Throwable $e) {
-            Log::warning('Career application DB store warning: ' . $e->getMessage());
         }
 
         // Send email notification to info@ptk2b.com
@@ -596,10 +600,6 @@ class CareerApiController extends Controller
     public function getApplications(): JsonResponse
     {
         try {
-            if (! Schema::hasTable('career_applications')) {
-                return response()->json([]);
-            }
-
             $applications = CareerApplication::orderBy('created_at', 'desc')->get();
             return response()->json($applications);
         } catch (\Throwable $e) {
