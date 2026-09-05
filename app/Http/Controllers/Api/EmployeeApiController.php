@@ -448,7 +448,9 @@ class EmployeeApiController extends Controller
         }
 
         $importedEmployees = 0;
+        $updatedEmployees = 0;
         $importedFamilies = 0;
+        $updatedFamilies = 0;
         $skipped = 0;
         $errorDetails = [];
 
@@ -491,7 +493,7 @@ class EmployeeApiController extends Controller
 
             if ($isFamilyRow && $currentEmployee) {
                 // ================================
-                // INSERT AS EMPLOYEE FAMILY MEMBER
+                // UPSERT EMPLOYEE FAMILY MEMBER
                 // ================================
                 try {
                     // Infer Hubungan
@@ -518,7 +520,7 @@ class EmployeeApiController extends Controller
                         }
                     }
 
-                    EmployeeFamily::create([
+                    $familyData = [
                         'employee_id'             => $currentEmployee->id,
                         'nama_lengkap'            => $nama,
                         'hubungan'                => $hubungan,
@@ -535,9 +537,23 @@ class EmployeeApiController extends Controller
                         'kode_faskes_dokter_gigi' => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
                         'nama_faskes_dokter_gigi' => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
                         'alamat'                  => !empty($row['alamat']) ? trim($row['alamat']) : $currentEmployee->alamat,
-                    ]);
+                    ];
 
-                    $importedFamilies++;
+                    // Check if family member already exists (match by employee_id + nama_lengkap)
+                    $existingFamily = EmployeeFamily::where('employee_id', $currentEmployee->id)
+                        ->where('nama_lengkap', $nama)
+                        ->first();
+
+                    if ($existingFamily) {
+                        // Update existing family member with non-null fields
+                        $updateFamilyData = array_filter($familyData, fn($v) => $v !== null && $v !== '');
+                        unset($updateFamilyData['employee_id']); // don't change the FK
+                        $existingFamily->update($updateFamilyData);
+                        $updatedFamilies++;
+                    } else {
+                        EmployeeFamily::create($familyData);
+                        $importedFamilies++;
+                    }
                 } catch (\Exception $e) {
                     $skipped++;
                     $errorDetails[] = "Baris {$lineNum} (Keluarga {$nama}): " . $e->getMessage();
@@ -547,12 +563,145 @@ class EmployeeApiController extends Controller
                 // INSERT AS PRINCIPAL EMPLOYEE
                 // ================================
 
-                // Check duplicate by NIP if present
-                if (!empty($nip) && Employee::where('nip', $nip)->exists()) {
-                    // If exists, set as current employee so subsequent family rows can still attach if needed
-                    $currentEmployee = Employee::where('nip', $nip)->first();
-                    $skipped++;
-                    $errorDetails[] = "Baris {$lineNum}: NIP \"{$nip}\" ({$nama}) sudah ada";
+                // Check existing employee by NIP or NIK for upsert
+                $existingEmployee = null;
+                if (!empty($nip)) {
+                    $existingEmployee = Employee::where('nip', $nip)->first();
+                }
+                if (!$existingEmployee && !empty($nik)) {
+                    $existingEmployee = Employee::where('nik', $nik)->first();
+                }
+
+                if ($existingEmployee) {
+                    // ================================
+                    // UPDATE EXISTING EMPLOYEE
+                    // ================================
+                    try {
+                        $dept = !empty($row['departemen']) ? trim($row['departemen']) : null;
+                        if ($dept) {
+                            Department::firstOrCreate(['name' => $dept]);
+                        }
+
+                        $outhalVal = !empty($row['outhal']) ? trim($row['outhal']) : null;
+                        $statusKarRaw = strtoupper(trim($row['status_karyawan'] ?? ''));
+                        $statusHubRaw = strtoupper(trim($row['status_hubungan_kerja'] ?? ''));
+
+                        $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
+                            || str_contains($statusKarRaw, 'NON')
+                            || str_contains($statusKarRaw, 'TIDAK')
+                            || str_contains($statusKarRaw, 'KELUAR')
+                            || str_contains($statusKarRaw, 'PHK')
+                            || str_contains($statusKarRaw, 'RESIGN')
+                            || str_contains($statusKarRaw, 'OFF');
+
+                        $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
+                        $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
+
+                        // Build update data — only overwrite non-empty values from Excel
+                        $updateData = array_filter([
+                            'bendera'                       => !empty($row['bendera']) ? trim($row['bendera']) : null,
+                            'kode'                          => !empty($row['kode']) ? trim($row['kode']) : null,
+                            'pisat'                         => !empty($row['pisat']) ? trim($row['pisat']) : null,
+                            'peserta'                       => !empty($row['peserta']) ? trim($row['peserta']) : null,
+                            'nip'                           => $nip ?: null,
+                            'jabatan'                       => !empty($row['jabatan']) ? trim($row['jabatan']) : null,
+                            'departemen'                    => $dept,
+                            'in'                            => $parseDate($row['in'] ?? null),
+                            'outtoday'                      => $parseDate($row['outtoday'] ?? null),
+                            'outhal'                        => $outhalVal,
+                            'kontrak'                       => !empty($row['kontrak']) ? trim($row['kontrak']) : null,
+                            'masa_kerja'                    => !empty($row['masa_kerja']) ? trim($row['masa_kerja']) : null,
+                            'status_hubungan_kerja'         => $statusHub,
+                            'status_karyawan'               => $statusKar,
+                            'mutasi_pt_jabatan'             => !empty($row['mutasi_pt_jabatan']) ? trim($row['mutasi_pt_jabatan']) : null,
+                            'lama_mutasi'                   => !empty($row['lama_mutasi']) ? trim($row['lama_mutasi']) : null,
+                            'no_telp'                       => !empty($row['no_telp']) ? trim($row['no_telp']) : null,
+                            'email'                         => !empty($row['email']) ? trim($row['email']) : null,
+                            'npwp'                          => !empty($row['npwp']) ? trim($row['npwp']) : null,
+                            'pendidikan_terakhir'           => !empty($row['pendidikan_terakhir']) ? trim($row['pendidikan_terakhir']) : null,
+                            'suku'                          => !empty($row['suku']) ? trim($row['suku']) : null,
+                            'agama'                         => !empty($row['agama']) ? trim($row['agama']) : null,
+                            'nomor_kartu_keluarga'          => $noKk ?: null,
+                            'nik'                           => $nik ?: null,
+                            'nama_lengkap'                  => $nama,
+                            'tempat_lahir'                  => !empty($row['tempat_lahir']) ? trim($row['tempat_lahir']) : null,
+                            'tanggal_lahir'                 => $parseDate($row['tanggal_lahir'] ?? null),
+                            'usia'                          => !empty($row['usia']) ? (int) $row['usia'] : null,
+                            'jenis_kelamin'                 => !empty($row['jenis_kelamin']) ? trim($row['jenis_kelamin']) : null,
+                            'status_kawin'                  => !empty($row['status_kawin']) ? trim($row['status_kawin']) : null,
+                            'tanggal_perkawinan_perceraian' => $parseDate($row['tanggal_perkawinan_perceraian'] ?? null),
+                            'lokal_nonlokal'                => !empty($row['lokal_nonlokal']) ? trim($row['lokal_nonlokal']) : null,
+                            'kewarganegaraan'               => !empty($row['kewarganegaraan']) ? trim($row['kewarganegaraan']) : null,
+                            'alamat'                        => !empty($row['alamat']) ? trim($row['alamat']) : null,
+                            'rt'                            => !empty($row['rt']) ? trim($row['rt']) : null,
+                            'rw'                            => !empty($row['rw']) ? trim($row['rw']) : null,
+                            'kelurahan'                     => !empty($row['kelurahan']) ? trim($row['kelurahan']) : null,
+                            'kecamatan'                     => !empty($row['kecamatan']) ? trim($row['kecamatan']) : null,
+                            'kabupaten'                     => !empty($row['kabupaten']) ? trim($row['kabupaten']) : null,
+                            'provinsi'                      => !empty($row['provinsi']) ? trim($row['provinsi']) : null,
+                            'kode_pos'                      => !empty($row['kode_pos']) ? trim($row['kode_pos']) : null,
+                            'domisili'                      => !empty($row['domisili']) ? trim($row['domisili']) : null,
+                            'nama_ayah'                     => !empty($row['nama_ayah']) ? trim($row['nama_ayah']) : null,
+                            'nama_ibu'                      => !empty($row['nama_ibu']) ? trim($row['nama_ibu']) : null,
+                            'nomor_bpjstk'                  => !empty($row['nomor_bpjstk']) ? trim($row['nomor_bpjstk']) : null,
+                            'nomor_bpjs_kis_peserta'        => !empty($row['nomor_bpjs_kis_peserta']) ? trim($row['nomor_bpjs_kis_peserta']) : null,
+                            'nomor_bpjs_kis_anggota_keluarga' => !empty($row['nomor_bpjs_kis_anggota_keluarga']) ? trim($row['nomor_bpjs_kis_anggota_keluarga']) : null,
+                            'jenis_mutasi'                  => !empty($row['jenis_mutasi']) ? trim($row['jenis_mutasi']) : null,
+                            'pisat_bpjs'                    => !empty($row['pisat_bpjs']) ? trim($row['pisat_bpjs']) : null,
+                            'alamat_tempat_tinggal_bpjs'    => !empty($row['alamat_tempat_tinggal_bpjs']) ? trim($row['alamat_tempat_tinggal_bpjs']) : null,
+                            'kode_faskes_tk_1'              => !empty($row['kode_faskes_tk_1']) ? trim($row['kode_faskes_tk_1']) : null,
+                            'nama_faskes_tk_1'              => !empty($row['nama_faskes_tk_1']) ? trim($row['nama_faskes_tk_1']) : null,
+                            'kode_faskes_dokter_gigi'       => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
+                            'nama_faskes_dokter_gigi'       => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
+                            'nomor_telepon_rumus'           => !empty($row['nomor_telepon_rumus']) ? trim($row['nomor_telepon_rumus']) : null,
+                            'email_rumus'                   => !empty($row['email_rumus']) ? trim($row['email_rumus']) : null,
+                            'npp'                           => !empty($row['npp']) ? trim($row['npp']) : null,
+                            'gaji_pokok_tunjangan_tetap'    => !empty($row['gaji_pokok_tunjangan_tetap']) ? trim($row['gaji_pokok_tunjangan_tetap']) : null,
+                            'kewarganegaraan_bpjs'          => !empty($row['kewarganegaraan_bpjs']) ? trim($row['kewarganegaraan_bpjs']) : null,
+                            'sub_cabang'                    => !empty($row['sub_cabang']) ? trim($row['sub_cabang']) : null,
+                            'catatan'                       => !empty($row['catatan']) ? trim($row['catatan']) : null,
+                        ], fn($v) => $v !== null && $v !== '');
+
+                        // Always include nama_lengkap and status fields even if they seem "empty"
+                        $updateData['nama_lengkap'] = $nama;
+                        $updateData['status_karyawan'] = $statusKar;
+                        $updateData['status_hubungan_kerja'] = $statusHub;
+
+                        $existingEmployee->update($updateData);
+
+                        // Sync contracts for updated employee
+                        if (!empty($row['contracts']) && is_array($row['contracts'])) {
+                            foreach ($row['contracts'] as $c) {
+                                if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
+                                    $cStart = $parseDate($c['tanggal_mulai']);
+                                    $cEnd = $parseDate($c['tanggal_selesai']);
+                                    if ($cStart && $cEnd) {
+                                        $diffM = (int) max(1, ceil(abs(strtotime($cEnd) - strtotime($cStart)) / (30 * 86400)));
+                                        // Upsert contract by employee_id + kontrak_ke
+                                        ContractHistory::updateOrCreate(
+                                            [
+                                                'employee_id' => $existingEmployee->id,
+                                                'kontrak_ke'  => (int) ($c['kontrak_ke'] ?? 1),
+                                            ],
+                                            [
+                                                'tanggal_mulai'      => $cStart,
+                                                'tanggal_selesai'    => $cEnd,
+                                                'masa_kontrak_bulan' => !empty($c['masa_kontrak_bulan']) ? (int) $c['masa_kontrak_bulan'] : $diffM,
+                                                'diserahkan'         => !empty($c['diserahkan']) ? trim($c['diserahkan']) : null,
+                                                'catatan'            => !empty($c['catatan']) ? trim($c['catatan']) : null,
+                                            ]
+                                        );
+                                    }
+                                }
+                            }
+                        }
+
+                        $currentEmployee = $existingEmployee;
+                        $updatedEmployees++;
+                    } catch (\Exception $e) {
+                        $skipped++;
+                        $errorDetails[] = "Baris {$lineNum} (Update {$nama}): " . $e->getMessage();
+                    }
                     continue;
                 }
 
@@ -672,11 +821,21 @@ class EmployeeApiController extends Controller
             }
         }
 
+        $msgParts = [];
+        if ($importedEmployees > 0) $msgParts[] = "{$importedEmployees} karyawan baru";
+        if ($updatedEmployees > 0) $msgParts[] = "{$updatedEmployees} karyawan diperbarui";
+        if ($importedFamilies > 0) $msgParts[] = "{$importedFamilies} keluarga baru";
+        if ($updatedFamilies > 0) $msgParts[] = "{$updatedFamilies} keluarga diperbarui";
+        $msg = !empty($msgParts) ? implode(', ', $msgParts) . ' berhasil diproses!' : 'Tidak ada data yang diproses.';
+        if ($skipped > 0) $msg .= " ({$skipped} dilewati)";
+
         return response()->json([
-            'message'             => "{$importedEmployees} data karyawan dan {$importedFamilies} anggota keluarga berhasil diproses! ({$skipped} dilewati)",
+            'message'             => $msg,
             'imported'            => $importedEmployees,
             'imported_employees'  => $importedEmployees,
+            'updated_employees'   => $updatedEmployees,
             'imported_families'   => $importedFamilies,
+            'updated_families'    => $updatedFamilies,
             'skipped'             => $skipped,
             'error_details'       => $errorDetails,
         ]);
