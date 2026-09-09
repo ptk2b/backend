@@ -1011,12 +1011,13 @@ class EmployeeApiController extends Controller
 
     public function addContract(Request $request, $id): JsonResponse
     {
-        $employee = Employee::findOrFail($id);
+        $employee = Employee::with('contractHistories')->findOrFail($id);
 
         $validator = Validator::make($request->all(), [
             'tanggal_mulai'      => 'required|date',
             'tanggal_selesai'    => 'required|date|after:tanggal_mulai',
             'masa_kontrak_bulan' => 'required|integer|min:1',
+            'kontrak_ke'         => 'nullable|integer|min:1',
             'catatan'            => 'nullable|string',
             'diserahkan'         => 'nullable|string|max:50',
             'sk_file'            => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
@@ -1028,8 +1029,53 @@ class EmployeeApiController extends Controller
 
         $data = $validator->validated();
 
-        $lastKontrak = $employee->contractHistories()->max('kontrak_ke') ?? 0;
-        $data['kontrak_ke'] = $lastKontrak + 1;
+        // 1. Determine highest existing contract from history
+        $historyMax = $employee->contractHistories()->max('kontrak_ke') ?? 0;
+
+        // 2. Determine current contract number from $employee->kontrak
+        $currentEmpKontrakNum = 0;
+        if (!empty($employee->kontrak)) {
+            $rawK = strtoupper(trim($employee->kontrak));
+            if (preg_match('/\d+/', $rawK, $m)) {
+                $currentEmpKontrakNum = (int) $m[0];
+            } else {
+                $romans = ['X' => 10, 'IX' => 9, 'VIII' => 8, 'VII' => 7, 'VI' => 6, 'V' => 5, 'IV' => 4, 'III' => 3, 'II' => 2, 'I' => 1];
+                foreach ($romans as $r => $val) {
+                    if (preg_match('/(^|\s|_|-|PKWT|KONTRAK)' . $r . '($|\s|_|-|$)/i', $rawK)) {
+                        $currentEmpKontrakNum = $val;
+                        break;
+                    }
+                }
+            }
+        }
+        if ($currentEmpKontrakNum === 0 && !empty($employee->outtoday)) {
+            $currentEmpKontrakNum = 1;
+        }
+
+        $highestExisting = max($historyMax, $currentEmpKontrakNum);
+
+        // Target contract number: use passed kontrak_ke if provided, otherwise advance to next
+        if (!empty($data['kontrak_ke']) && intval($data['kontrak_ke']) > 0) {
+            $targetKontrakKe = intval($data['kontrak_ke']);
+        } else {
+            $targetKontrakKe = max(1, $highestExisting + 1);
+        }
+
+        // If target is >= 2 but contract 1 history is missing, backfill contract 1 history
+        if ($targetKontrakKe > 1 && $historyMax === 0 && $employee->in) {
+            ContractHistory::firstOrCreate(
+                ['employee_id' => $employee->id, 'kontrak_ke' => 1],
+                [
+                    'tanggal_mulai'      => $employee->in,
+                    'tanggal_selesai'    => $employee->outtoday ?? $data['tanggal_mulai'],
+                    'masa_kontrak_bulan' => 12,
+                    'diserahkan'         => 'Sudah',
+                    'catatan'            => 'Kontrak Pertama',
+                ]
+            );
+        }
+
+        $data['kontrak_ke'] = $targetKontrakKe;
         $data['employee_id'] = $employee->id;
 
         if ($request->hasFile('sk_file')) {
@@ -1037,11 +1083,15 @@ class EmployeeApiController extends Controller
         }
         unset($data['sk_file']);
 
-        $history = ContractHistory::create($data);
+        $history = ContractHistory::updateOrCreate(
+            ['employee_id' => $employee->id, 'kontrak_ke' => $targetKontrakKe],
+            $data
+        );
 
         $employee->update([
-            'kontrak'  => 'Kontrak ' . $data['kontrak_ke'],
-            'outtoday' => $data['tanggal_selesai'],
+            'kontrak'         => 'Kontrak ' . $targetKontrakKe,
+            'outtoday'        => $data['tanggal_selesai'],
+            'status_karyawan' => 'ACTIVE',
         ]);
 
         return response()->json($history, 201);
