@@ -106,10 +106,15 @@ class Employee extends Model
                 $employee->usia = Carbon::parse($employee->tanggal_lahir)->age;
             }
 
-            // 2. Auto-detect NON ACTIVE if outhal (alasan keluar) is filled
-            if (!empty($employee->outhal) && trim($employee->outhal) !== '' && trim($employee->outhal) !== '-') {
+            // 2. Handle status_karyawan:
+            // If status_karyawan is explicitly ACTIVE, ALWAYS preserve it (even if PKWT has expired)
+            if ($employee->status_karyawan === 'ACTIVE') {
+                // Keep ACTIVE as explicitly designated
+            } elseif ($employee->status_karyawan === 'NON ACTIVE') {
+                // Keep NON ACTIVE
+            } elseif (!empty($employee->outhal) && trim($employee->outhal) !== '' && trim($employee->outhal) !== '-') {
                 $employee->status_karyawan = 'NON ACTIVE';
-            } elseif (empty($employee->status_karyawan) || !in_array($employee->status_karyawan, ['ACTIVE', 'NON ACTIVE'])) {
+            } else {
                 $employee->status_karyawan = 'ACTIVE';
             }
 
@@ -138,7 +143,7 @@ class Employee extends Model
     }
 
     /**
-     * Filter employees with contracts expiring within $days days (PKWT active only, without outhal).
+     * Filter employees with contracts expiring within $days days or already passed OUTTODAY (PKWT active only).
      */
     public function scopeExpiringSoon(Builder $query, int $days = 30): Builder
     {
@@ -147,14 +152,8 @@ class Employee extends Model
                 $q->where('status_hubungan_kerja', 'PKWT')
                   ->orWhere('status_hubungan_kerja', 'like', '%kontrak%');
             })
-            ->where(function ($q) {
-                $q->whereNull('outhal')->orWhere('outhal', '')->orWhere('outhal', '-');
-            })
             ->whereNotNull('outtoday')
-            ->whereBetween('outtoday', [
-                Carbon::today(),
-                Carbon::today()->addDays($days),
-            ]);
+            ->where('outtoday', '<=', Carbon::today()->addDays($days));
     }
 
     public function contractHistories(): HasMany

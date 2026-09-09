@@ -669,15 +669,19 @@ class EmployeeApiController extends Controller
                         $statusKarRaw = strtoupper(trim($row['status_karyawan'] ?? ''));
                         $statusHubRaw = strtoupper(trim($row['status_hubungan_kerja'] ?? ''));
 
-                        $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
-                            || str_contains($statusKarRaw, 'NON')
-                            || str_contains($statusKarRaw, 'TIDAK')
-                            || str_contains($statusKarRaw, 'KELUAR')
-                            || str_contains($statusKarRaw, 'PHK')
-                            || str_contains($statusKarRaw, 'RESIGN')
-                            || str_contains($statusKarRaw, 'OFF');
+                        if ($statusKarRaw === 'ACTIVE' || (!empty($statusKarRaw) && !str_contains($statusKarRaw, 'NON') && str_contains($statusKarRaw, 'ACTI'))) {
+                            $statusKar = 'ACTIVE';
+                        } else {
+                            $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
+                                || str_contains($statusKarRaw, 'NON')
+                                || str_contains($statusKarRaw, 'TIDAK')
+                                || str_contains($statusKarRaw, 'KELUAR')
+                                || str_contains($statusKarRaw, 'PHK')
+                                || str_contains($statusKarRaw, 'RESIGN')
+                                || str_contains($statusKarRaw, 'OFF');
 
-                        $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
+                            $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
+                        }
                         $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
 
                         // Build update data — only overwrite non-empty values from Excel
@@ -797,15 +801,19 @@ class EmployeeApiController extends Controller
                 $statusKarRaw = strtoupper(trim($row['status_karyawan'] ?? ''));
                 $statusHubRaw = strtoupper(trim($row['status_hubungan_kerja'] ?? ''));
 
-                $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
-                    || str_contains($statusKarRaw, 'NON')
-                    || str_contains($statusKarRaw, 'TIDAK')
-                    || str_contains($statusKarRaw, 'KELUAR')
-                    || str_contains($statusKarRaw, 'PHK')
-                    || str_contains($statusKarRaw, 'RESIGN')
-                    || str_contains($statusKarRaw, 'OFF');
+                if ($statusKarRaw === 'ACTIVE' || (!empty($statusKarRaw) && !str_contains($statusKarRaw, 'NON') && str_contains($statusKarRaw, 'ACTI'))) {
+                    $statusKar = 'ACTIVE';
+                } else {
+                    $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
+                        || str_contains($statusKarRaw, 'NON')
+                        || str_contains($statusKarRaw, 'TIDAK')
+                        || str_contains($statusKarRaw, 'KELUAR')
+                        || str_contains($statusKarRaw, 'PHK')
+                        || str_contains($statusKarRaw, 'RESIGN')
+                        || str_contains($statusKarRaw, 'OFF');
 
-                $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
+                    $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
+                }
                 $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
 
                 try {
