@@ -100,6 +100,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/employees/import-template', [EmployeeApiController::class, 'importTemplate']);
     Route::post('/admin/employees/import-batch', [EmployeeApiController::class, 'importBatch']);
     Route::get('/admin/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
+    Route::delete('/admin/employees/all', [EmployeeApiController::class, 'destroyAll']);
+    Route::post('/admin/employees/bulk-delete', [EmployeeApiController::class, 'bulkDelete']);
     Route::get('/admin/employees', [EmployeeApiController::class, 'index']);
     Route::get('/admin/employees/{id}', [EmployeeApiController::class, 'show'])->whereNumber('id');
     Route::post('/admin/employees', [EmployeeApiController::class, 'store']);

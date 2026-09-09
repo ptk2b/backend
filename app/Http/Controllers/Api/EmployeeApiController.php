@@ -11,6 +11,9 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
 class EmployeeApiController extends Controller
@@ -416,6 +419,86 @@ class EmployeeApiController extends Controller
         $employee->delete();
 
         return response()->json(['message' => 'Data karyawan berhasil dihapus']);
+    }
+
+    /**
+     * Delete ALL employees, including contracts, families, and stored files.
+     */
+    public function destroyAll(): JsonResponse
+    {
+        try {
+            DB::transaction(function () {
+                $employees = Employee::with('contractHistories')->get();
+                foreach ($employees as $emp) {
+                    if ($emp->sk_path) {
+                        Storage::disk('public')->delete($emp->sk_path);
+                    }
+                    foreach ($emp->contractHistories as $h) {
+                        if ($h->sk_path) {
+                            Storage::disk('public')->delete($h->sk_path);
+                        }
+                    }
+                }
+
+                EmployeeFamily::query()->delete();
+                ContractHistory::query()->delete();
+                Employee::query()->delete();
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Semua data karyawan berhasil dihapus.'
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Failed to delete all employees: " . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal menghapus semua data karyawan: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Bulk delete selected employees by IDs.
+     */
+    public function bulkDelete(Request $request): JsonResponse
+    {
+        $ids = $request->input('ids', []);
+        if (!is_array($ids) || empty($ids)) {
+            return response()->json(['message' => 'Tidak ada karyawan yang dipilih'], 422);
+        }
+
+        try {
+            $count = 0;
+            DB::transaction(function () use ($ids, &$count) {
+                $employees = Employee::with('contractHistories')->whereIn('id', $ids)->get();
+                $count = $employees->count();
+
+                foreach ($employees as $emp) {
+                    if ($emp->sk_path) {
+                        Storage::disk('public')->delete($emp->sk_path);
+                    }
+                    foreach ($emp->contractHistories as $h) {
+                        if ($h->sk_path) {
+                            Storage::disk('public')->delete($h->sk_path);
+                        }
+                    }
+                }
+
+                EmployeeFamily::whereIn('employee_id', $ids)->delete();
+                ContractHistory::whereIn('employee_id', $ids)->delete();
+                Employee::whereIn('id', $ids)->delete();
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => "{$count} data karyawan berhasil dihapus."
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Failed to bulk delete employees: " . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal menghapus data karyawan terpilih: ' . $e->getMessage()
+            ], 500);
+        }
     }
 
     // ============================
