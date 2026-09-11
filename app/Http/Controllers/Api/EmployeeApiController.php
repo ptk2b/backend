@@ -65,12 +65,38 @@ class EmployeeApiController extends Controller
 
         // Filter by lokal_nonlokal
         if ($lokal = $request->input('lokal_nonlokal')) {
-            $query->where('lokal_nonlokal', $lokal);
+            if (strtoupper($lokal) === 'LOKAL') {
+                $query->where(function ($q) {
+                    $q->where('lokal_nonlokal', 'like', '%LOKAL%')
+                      ->where('lokal_nonlokal', 'not like', '%NON%');
+                });
+            } elseif (str_contains(strtoupper($lokal), 'NON')) {
+                $query->where(function ($q) {
+                    $q->where('lokal_nonlokal', 'like', '%NON%');
+                });
+            } else {
+                $query->where('lokal_nonlokal', $lokal);
+            }
         }
 
         // Filter by jenis_kelamin
         if ($gender = $request->input('jenis_kelamin')) {
-            $query->where('jenis_kelamin', $gender);
+            $gUpper = strtoupper($gender);
+            if ($gUpper === 'LAKI-LAKI' || str_contains($gUpper, 'LAKI') || $gUpper === '1') {
+                $query->where(function ($q) {
+                    $q->where('jenis_kelamin', 'like', '%LAKI%')
+                      ->orWhere('jenis_kelamin', '1')
+                      ->orWhere('jenis_kelamin', 'L');
+                });
+            } elseif ($gUpper === 'PEREMPUAN' || str_contains($gUpper, 'PEREMPUAN') || $gUpper === '2') {
+                $query->where(function ($q) {
+                    $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                      ->orWhere('jenis_kelamin', '2')
+                      ->orWhere('jenis_kelamin', 'P');
+                });
+            } else {
+                $query->where('jenis_kelamin', $gender);
+            }
         }
 
         $employees = $query->orderBy('nama_lengkap', 'asc')->get();
@@ -90,6 +116,31 @@ class EmployeeApiController extends Controller
         $pkwtt = Employee::where('status_karyawan', 'ACTIVE')->where('status_hubungan_kerja', 'PKWTT')->count();
         $skpkt = Employee::where('status_karyawan', 'ACTIVE')->where('status_hubungan_kerja', 'SKPKT')->count();
 
+        $lokal = Employee::where('status_karyawan', 'ACTIVE')
+            ->where(function ($q) {
+                $q->where('lokal_nonlokal', 'like', '%LOKAL%')
+                  ->where('lokal_nonlokal', 'not like', '%NON%');
+            })->count();
+
+        $nonLokal = Employee::where('status_karyawan', 'ACTIVE')
+            ->where(function ($q) {
+                $q->where('lokal_nonlokal', 'like', '%NON%');
+            })->count();
+
+        $lakiLaki = Employee::where('status_karyawan', 'ACTIVE')
+            ->where(function ($q) {
+                $q->where('jenis_kelamin', 'like', '%LAKI%')
+                  ->orWhere('jenis_kelamin', '1')
+                  ->orWhere('jenis_kelamin', 'L');
+            })->count();
+
+        $perempuan = Employee::where('status_karyawan', 'ACTIVE')
+            ->where(function ($q) {
+                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                  ->orWhere('jenis_kelamin', '2')
+                  ->orWhere('jenis_kelamin', 'P');
+            })->count();
+
         return response()->json([
             'total'      => $total,
             'active'     => $active,
@@ -97,6 +148,10 @@ class EmployeeApiController extends Controller
             'pkwt'       => $pkwt,
             'pkwtt'      => $pkwtt,
             'skpkt'      => $skpkt,
+            'lokal'      => $lokal,
+            'non_lokal'  => $nonLokal,
+            'laki_laki'  => $lakiLaki,
+            'perempuan'  => $perempuan,
         ]);
     }
 
