@@ -419,6 +419,13 @@ class EmployeeApiController extends Controller
 
         $data = $validator->validated();
 
+        // Default PKWT contract end date to at least 6 months if outtoday is missing
+        if (($data['status_hubungan_kerja'] ?? '') === 'PKWT' && !empty($data['in']) && empty($data['outtoday'])) {
+            try {
+                $data['outtoday'] = Carbon::parse($data['in'])->addMonths(6)->subDay()->format('Y-m-d');
+            } catch (\Exception $e) {}
+        }
+
         if ($request->hasFile('sk_file')) {
             $data['sk_path'] = $request->file('sk_file')->store('employee-sk', 'public');
         }
@@ -431,6 +438,7 @@ class EmployeeApiController extends Controller
         $employee = Employee::create($data);
 
         $rawContracts = $request->input('contracts');
+        $hasSavedContracts = false;
         if (!empty($rawContracts)) {
             $contractsArray = is_string($rawContracts) ? json_decode($rawContracts, true) : $rawContracts;
             if (is_array($contractsArray)) {
@@ -443,7 +451,7 @@ class EmployeeApiController extends Controller
                             $end = Carbon::parse($c['tanggal_selesai']);
                             $diffMonths = max(1, $start->diffInMonths($end));
                         } catch (\Exception $ex) {
-                            $diffMonths = 12;
+                            $diffMonths = 6;
                         }
 
                         $cData = [
@@ -456,16 +464,33 @@ class EmployeeApiController extends Controller
                         }
 
                         try {
-                            ContractHistory::updateOrCreate(
-                                ['employee_id' => $employee->id, 'kontrak_ke' => $kNum],
-                                $cData
-                            );
+                            ContractHistory::create(array_merge($cData, [
+                                'employee_id' => $employee->id,
+                                'kontrak_ke'  => $kNum,
+                            ]));
+                            $hasSavedContracts = true;
                         } catch (\Exception $ex) {
-                            \Log::error("Failed saving contract history: " . $ex->getMessage());
+                            \Log::error("Failed saving initial contract: " . $ex->getMessage());
                         }
                     }
                 }
             }
+        }
+
+        if (!$hasSavedContracts && ($data['status_hubungan_kerja'] ?? '') === 'PKWT' && !empty($data['in'])) {
+            try {
+                $effEnd = !empty($data['outtoday']) ? $data['outtoday'] : Carbon::parse($data['in'])->addMonths(6)->subDay()->format('Y-m-d');
+                ContractHistory::firstOrCreate(
+                    ['employee_id' => $employee->id, 'kontrak_ke' => 1],
+                    [
+                        'tanggal_mulai'      => $data['in'],
+                        'tanggal_selesai'    => $effEnd,
+                        'masa_kontrak_bulan' => 6,
+                        'diserahkan'         => 'Sudah',
+                        'catatan'            => 'Kontrak Pertama (Minimal 6 Bulan)',
+                    ]
+                );
+            } catch (\Exception $e) {}
         }
 
         return response()->json($employee->load(['contractHistories', 'families']), 201);
@@ -566,6 +591,14 @@ class EmployeeApiController extends Controller
 
         if (!empty($data['departemen'])) {
             Department::firstOrCreate(['name' => trim($data['departemen'])]);
+        }
+
+        $statusHub = $data['status_hubungan_kerja'] ?? $employee->status_hubungan_kerja;
+        $inVal = $data['in'] ?? $employee->in;
+        if ($statusHub === 'PKWT' && !empty($inVal) && empty($data['outtoday'])) {
+            try {
+                $data['outtoday'] = Carbon::parse($inVal)->addMonths(6)->subDay()->format('Y-m-d');
+            } catch (\Exception $e) {}
         }
 
         $employee->update($data);
@@ -896,6 +929,14 @@ class EmployeeApiController extends Controller
                         }
                         $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
 
+                        $inParsed = $parseDate($row['in'] ?? null);
+                        $outtodayParsed = $parseDate($row['outtoday'] ?? null);
+                        if ($statusHub === 'PKWT' && !empty($inParsed) && empty($outtodayParsed)) {
+                            try {
+                                $outtodayParsed = Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
+                            } catch (\Exception $e) {}
+                        }
+
                         // Build update data — only overwrite non-empty values from Excel
                         $updateData = array_filter([
                             'bendera'                       => !empty($row['bendera']) ? trim($row['bendera']) : null,
@@ -905,8 +946,8 @@ class EmployeeApiController extends Controller
                             'nip'                           => $nip ?: null,
                             'jabatan'                       => !empty($row['jabatan']) ? trim($row['jabatan']) : null,
                             'departemen'                    => $dept,
-                            'in'                            => $parseDate($row['in'] ?? null),
-                            'outtoday'                      => $parseDate($row['outtoday'] ?? null),
+                            'in'                            => $inParsed,
+                            'outtoday'                      => $outtodayParsed,
                             'outhal'                        => $outhalVal,
                             'kontrak'                       => !empty($row['kontrak']) ? trim($row['kontrak']) : null,
                             'masa_kerja'                    => !empty($row['masa_kerja']) ? trim($row['masa_kerja']) : null,
@@ -1028,6 +1069,14 @@ class EmployeeApiController extends Controller
                 }
                 $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
 
+                $inParsed = $parseDate($row['in'] ?? null);
+                $outtodayParsed = $parseDate($row['outtoday'] ?? null);
+                if ($statusHub === 'PKWT' && !empty($inParsed) && empty($outtodayParsed)) {
+                    try {
+                        $outtodayParsed = Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
+                    } catch (\Exception $e) {}
+                }
+
                 try {
                     $newEmployee = Employee::create([
                         'bendera'                       => !empty($row['bendera']) ? trim($row['bendera']) : null,
@@ -1037,8 +1086,8 @@ class EmployeeApiController extends Controller
                         'nip'                           => $nip ?: null,
                         'jabatan'                       => !empty($row['jabatan']) ? trim($row['jabatan']) : null,
                         'departemen'                    => $dept,
-                        'in'                            => $parseDate($row['in'] ?? null),
-                        'outtoday'                      => $parseDate($row['outtoday'] ?? null),
+                        'in'                            => $inParsed,
+                        'outtoday'                      => $outtodayParsed,
                         'outhal'                        => $outhalVal,
                         'kontrak'                       => !empty($row['kontrak']) ? trim($row['kontrak']) : null,
                         'masa_kerja'                    => !empty($row['masa_kerja']) ? trim($row['masa_kerja']) : null,
@@ -1094,6 +1143,7 @@ class EmployeeApiController extends Controller
                     ]);
 
                     // Sync contracts 1 to 10 if provided in import row
+                    $hasImportedContracts = false;
                     if (!empty($row['contracts']) && is_array($row['contracts'])) {
                         foreach ($row['contracts'] as $c) {
                             if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
@@ -1110,9 +1160,25 @@ class EmployeeApiController extends Controller
                                         'diserahkan'         => !empty($c['diserahkan']) ? trim($c['diserahkan']) : null,
                                         'catatan'            => !empty($c['catatan']) ? trim($c['catatan']) : null,
                                     ]);
+                                    $hasImportedContracts = true;
                                 }
                             }
                         }
+                    }
+
+                    if (!$hasImportedContracts && $statusHub === 'PKWT' && !empty($inParsed)) {
+                        try {
+                            $effEnd = $outtodayParsed ?: Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
+                            ContractHistory::create([
+                                'employee_id'        => $newEmployee->id,
+                                'kontrak_ke'         => 1,
+                                'tanggal_mulai'      => $inParsed,
+                                'tanggal_selesai'    => $effEnd,
+                                'masa_kontrak_bulan' => 6,
+                                'diserahkan'         => 'Sudah',
+                                'catatan'            => 'Kontrak Pertama (Minimal 6 Bulan)',
+                            ]);
+                        } catch (\Exception $e) {}
                     }
 
                     $currentEmployee = $newEmployee;
