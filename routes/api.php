@@ -96,6 +96,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/employees/expiring', [EmployeeApiController::class, 'expiring']);
     Route::get('/admin/employees/expiring-contracts', [EmployeeApiController::class, 'expiring']);
     Route::get('/admin/employees/positions', [EmployeeApiController::class, 'positions']);
+    Route::get('/admin/employees/educations', [EmployeeApiController::class, 'educations']);
     Route::get('/admin/employees/export', [EmployeeApiController::class, 'export']);
     Route::get('/admin/employees/import-template', [EmployeeApiController::class, 'importTemplate']);
     Route::post('/admin/employees/import-batch', [EmployeeApiController::class, 'importBatch']);

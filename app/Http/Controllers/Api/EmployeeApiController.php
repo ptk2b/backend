@@ -99,6 +99,19 @@ class EmployeeApiController extends Controller
             }
         }
 
+        // Filter by pendidikan_terakhir
+        if ($edu = $request->input('pendidikan_terakhir')) {
+            if ($edu === 'BELUM TERISI' || $edu === 'EMPTY' || $edu === 'null') {
+                $query->where(function ($q) {
+                    $q->whereNull('pendidikan_terakhir')
+                      ->orWhere('pendidikan_terakhir', '')
+                      ->orWhere('pendidikan_terakhir', '-');
+                });
+            } else {
+                $query->where('pendidikan_terakhir', $edu);
+            }
+        }
+
         $employees = $query->orderBy('nama_lengkap', 'asc')->get();
 
         return response()->json($employees);
@@ -141,18 +154,42 @@ class EmployeeApiController extends Controller
                   ->orWhere('jenis_kelamin', 'P');
             })->count();
 
+        $pendidikanKosong = Employee::where('status_karyawan', 'ACTIVE')
+            ->where(function ($q) {
+                $q->whereNull('pendidikan_terakhir')
+                  ->orWhere('pendidikan_terakhir', '')
+                  ->orWhere('pendidikan_terakhir', '-');
+            })->count();
+
         return response()->json([
-            'total'      => $total,
-            'active'     => $active,
-            'non_active' => $nonActive,
-            'pkwt'       => $pkwt,
-            'pkwtt'      => $pkwtt,
-            'skpkt'      => $skpkt,
-            'lokal'      => $lokal,
-            'non_lokal'  => $nonLokal,
-            'laki_laki'  => $lakiLaki,
-            'perempuan'  => $perempuan,
+            'total'             => $total,
+            'active'            => $active,
+            'non_active'        => $nonActive,
+            'pkwt'              => $pkwt,
+            'pkwtt'             => $pkwtt,
+            'skpkt'             => $skpkt,
+            'lokal'             => $lokal,
+            'non_lokal'         => $nonLokal,
+            'laki_laki'         => $lakiLaki,
+            'perempuan'         => $perempuan,
+            'pendidikan_kosong' => $pendidikanKosong,
         ]);
+    }
+
+    /**
+     * Get unique list of existing education levels for dropdown filter.
+     */
+    public function educations(): JsonResponse
+    {
+        $educations = Employee::whereNotNull('pendidikan_terakhir')
+            ->where('pendidikan_terakhir', '!=', '')
+            ->where('pendidikan_terakhir', '!=', '-')
+            ->distinct()
+            ->pluck('pendidikan_terakhir')
+            ->sort()
+            ->values();
+
+        return response()->json($educations);
     }
 
     /**
