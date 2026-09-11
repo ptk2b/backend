@@ -101,20 +101,112 @@ class EmployeeApiController extends Controller
 
         // Filter by pendidikan_terakhir
         if ($edu = $request->input('pendidikan_terakhir')) {
-            if ($edu === 'BELUM TERISI' || $edu === 'EMPTY' || $edu === 'null') {
-                $query->where(function ($q) {
-                    $q->whereNull('pendidikan_terakhir')
-                      ->orWhere('pendidikan_terakhir', '')
-                      ->orWhere('pendidikan_terakhir', '-');
-                });
-            } else {
-                $query->where('pendidikan_terakhir', $edu);
-            }
+            $this->applyEducationFilter($query, $edu);
         }
 
         $employees = $query->orderBy('nama_lengkap', 'asc')->get();
 
         return response()->json($employees);
+    }
+
+    /**
+     * Apply simplified education tier filter (SD, SMP, SMA/SMK, D3, S1, S2, S3, BELUM TERISI).
+     */
+    private function applyEducationFilter($query, string $edu): void
+    {
+        $eduUpper = strtoupper(trim($edu));
+
+        if ($eduUpper === 'BELUM TERISI' || $eduUpper === 'EMPTY' || $eduUpper === 'NULL') {
+            $query->where(function ($q) {
+                $q->whereNull('pendidikan_terakhir')
+                  ->orWhere('pendidikan_terakhir', '')
+                  ->orWhere('pendidikan_terakhir', '-');
+            });
+        } elseif ($eduUpper === 'SD') {
+            $query->where(function ($q) {
+                $q->where('pendidikan_terakhir', 'like', '%SD%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%SEKOLAH DASAR%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%PAKET A%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%IBTIDAIYAH%');
+            });
+        } elseif ($eduUpper === 'SMP') {
+            $query->where(function ($q) {
+                $q->where('pendidikan_terakhir', 'like', '%SMP%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%SLTP%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%MTS%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%PAKET B%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%TSANAWIYAH%');
+            });
+        } elseif ($eduUpper === 'SMA/SMK' || $eduUpper === 'SMA' || $eduUpper === 'SMK' || $eduUpper === 'SLTA') {
+            $query->where(function ($q) {
+                $q->where('pendidikan_terakhir', 'like', '%SMA%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%SMK%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%SLTA%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%STM%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%SMEA%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%SMU%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%PAKET C%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%ALIYAH%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%KEJURUAN%');
+            });
+        } elseif ($eduUpper === 'D3' || $eduUpper === 'D1' || $eduUpper === 'D2' || $eduUpper === 'DIPLOMA') {
+            $query->where(function ($q) {
+                $q->where(function ($sub) {
+                    $sub->where('pendidikan_terakhir', 'like', '%DIPLOMA III%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%DIPLOMA 3%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%DIPLOMA I%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%DIPLOMA II%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%DIPLOMA 1%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%DIPLOMA 2%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%D3%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%D-3%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%D2%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%D1%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%AKADEMI%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%SARJANA MUDA%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%A.MD%');
+                })->where('pendidikan_terakhir', 'not like', '%DIPLOMA IV%')
+                  ->where('pendidikan_terakhir', 'not like', '%STRATA I%')
+                  ->where('pendidikan_terakhir', 'not like', '%STRATA 1%');
+            });
+        } elseif ($eduUpper === 'S1' || $eduUpper === 'D4' || $eduUpper === 'STRATA 1' || $eduUpper === 'STRATA I') {
+            $query->where(function ($q) {
+                $q->where(function ($sub) {
+                    $sub->where('pendidikan_terakhir', 'like', '%STRATA I%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%STRATA 1%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%DIPLOMA IV%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%D4%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%D-IV%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%S1%')
+                        ->orWhere('pendidikan_terakhir', 'like', '%S-1%')
+                        ->orWhere(function ($s) {
+                            $s->where('pendidikan_terakhir', 'like', '%SARJANA%')
+                              ->where('pendidikan_terakhir', 'not like', '%SARJANA MUDA%');
+                        });
+                })->where('pendidikan_terakhir', 'not like', '%STRATA II%')
+                  ->where('pendidikan_terakhir', 'not like', '%STRATA III%');
+            });
+        } elseif ($eduUpper === 'S2' || $eduUpper === 'STRATA 2' || $eduUpper === 'STRATA II') {
+            $query->where(function ($q) {
+                $q->where('pendidikan_terakhir', 'like', '%STRATA II%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%STRATA 2%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%S2%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%S-2%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%MAGISTER%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%MASTER%');
+            });
+        } elseif ($eduUpper === 'S3' || $eduUpper === 'STRATA 3' || $eduUpper === 'STRATA III') {
+            $query->where(function ($q) {
+                $q->where('pendidikan_terakhir', 'like', '%STRATA III%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%STRATA 3%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%S3%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%S-3%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%DOKTOR%')
+                  ->orWhere('pendidikan_terakhir', 'like', '%DOCTOR%');
+            });
+        } else {
+            $query->where('pendidikan_terakhir', 'like', "%{$edu}%");
+        }
     }
 
     /**
@@ -161,6 +253,35 @@ class EmployeeApiController extends Controller
                   ->orWhere('pendidikan_terakhir', '-');
             })->count();
 
+        // Counts for each simplified education tier (Active Employees)
+        $qSd = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qSd, 'SD');
+        $eduSd = $qSd->count();
+
+        $qSmp = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qSmp, 'SMP');
+        $eduSmp = $qSmp->count();
+
+        $qSma = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qSma, 'SMA/SMK');
+        $eduSma = $qSma->count();
+
+        $qD3 = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qD3, 'D3');
+        $eduD3 = $qD3->count();
+
+        $qS1 = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qS1, 'S1');
+        $eduS1 = $qS1->count();
+
+        $qS2 = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qS2, 'S2');
+        $eduS2 = $qS2->count();
+
+        $qS3 = Employee::where('status_karyawan', 'ACTIVE');
+        $this->applyEducationFilter($qS3, 'S3');
+        $eduS3 = $qS3->count();
+
         return response()->json([
             'total'             => $total,
             'active'            => $active,
@@ -173,23 +294,22 @@ class EmployeeApiController extends Controller
             'laki_laki'         => $lakiLaki,
             'perempuan'         => $perempuan,
             'pendidikan_kosong' => $pendidikanKosong,
+            'edu_sd'            => $eduSd,
+            'edu_smp'           => $eduSmp,
+            'edu_sma'           => $eduSma,
+            'edu_d3'            => $eduD3,
+            'edu_s1'            => $eduS1,
+            'edu_s2'            => $eduS2,
+            'edu_s3'            => $eduS3,
         ]);
     }
 
     /**
-     * Get unique list of existing education levels for dropdown filter.
+     * Get simplified list of education tiers for dropdown filter.
      */
     public function educations(): JsonResponse
     {
-        $educations = Employee::whereNotNull('pendidikan_terakhir')
-            ->where('pendidikan_terakhir', '!=', '')
-            ->where('pendidikan_terakhir', '!=', '-')
-            ->distinct()
-            ->pluck('pendidikan_terakhir')
-            ->sort()
-            ->values();
-
-        return response()->json($educations);
+        return response()->json(['SD', 'SMP', 'SMA/SMK', 'D3', 'S1', 'S2', 'S3']);
     }
 
     /**
