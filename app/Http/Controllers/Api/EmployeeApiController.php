@@ -854,8 +854,6 @@ class EmployeeApiController extends Controller
         $skipped = 0;
         $errorDetails = [];
 
-        $currentEmployee = null;
-
         $parseDate = function ($val) {
             if (empty($val)) return null;
             try {
@@ -865,400 +863,417 @@ class EmployeeApiController extends Controller
             }
         };
 
+        // -------------------------------------------------------------
+        // STEP 1: CLASSIFY ALL ROWS (EMPLOYEE vs FAMILY)
+        // -------------------------------------------------------------
+        $employeeRows = []; // index => metadata
         foreach ($items as $index => $row) {
+            $nama = trim($row['nama_lengkap'] ?? $row['nama'] ?? '');
+            if (empty($nama)) continue;
+
+            $nip = trim($row['nip'] ?? '');
+            $jabatan = trim($row['jabatan'] ?? '');
+            $inVal = trim($row['in'] ?? '');
+            $pisat = strtoupper(trim($row['pisat'] ?? $row['pisat_bpjs'] ?? ''));
+
+            $isExplicitFamily = !empty($row['is_family']) && ($row['is_family'] === true || $row['is_family'] === 'true' || $row['is_family'] === 1 || $row['is_family'] === '1');
+            $isExplicitEmployee = isset($row['is_family']) && ($row['is_family'] === false || $row['is_family'] === 'false' || $row['is_family'] === 0 || $row['is_family'] === '0');
+
+            $isPisatFamily = in_array($pisat, ['2', '3', '4', '2. SUAMI', '3. ISTRI', '4. ANAK', 'SUAMI', 'ISTRI', 'ANAK', '2 = SUAMI', '3 = ISTRI', '4 = ANAK']);
+
+            $isEmp = false;
+            if ($isExplicitEmployee) {
+                $isEmp = true;
+            } elseif ($isExplicitFamily || $isPisatFamily) {
+                $isEmp = false;
+            } elseif (!empty($nip) || !empty($jabatan) || !empty($inVal) || $pisat === '1' || str_contains($pisat, 'PESERTA')) {
+                $isEmp = true;
+            }
+
+            if ($isEmp) {
+                $employeeRows[$index] = [
+                    'nip'    => $nip,
+                    'nama'   => $nama,
+                    'noKk'   => trim($row['nomor_kartu_keluarga'] ?? ''),
+                    'gender' => strtoupper(trim($row['jenis_kelamin'] ?? '')),
+                    'alamat' => trim($row['alamat'] ?? ''),
+                ];
+            }
+        }
+
+        // If no employees were detected (e.g. template without NIP), treat first non-empty row as employee
+        if (empty($employeeRows)) {
+            foreach ($items as $index => $row) {
+                if (!empty($row['nama_lengkap'] ?? $row['nama'] ?? '')) {
+                    $employeeRows[$index] = [
+                        'nip'    => trim($row['nip'] ?? ''),
+                        'nama'   => trim($row['nama_lengkap'] ?? $row['nama'] ?? ''),
+                        'noKk'   => trim($row['nomor_kartu_keluarga'] ?? ''),
+                        'gender' => strtoupper(trim($row['jenis_kelamin'] ?? '')),
+                        'alamat' => trim($row['alamat'] ?? ''),
+                    ];
+                    break;
+                }
+            }
+        }
+
+        // -------------------------------------------------------------
+        // STEP 2: DETERMINE PARENT EMPLOYEE FOR EACH FAMILY ROW
+        // (Smart Lookahead: Kepala Keluarga / Suami above Female Employee)
+        // -------------------------------------------------------------
+        $familyParentIndexMap = []; // index => employee_row_index
+        foreach ($items as $index => $row) {
+            if (isset($employeeRows[$index])) continue;
+
+            $parentIdx = null;
+
+            // A. By explicit parent_nip
+            if (!empty($row['parent_nip'])) {
+                foreach ($employeeRows as $eIdx => $eInfo) {
+                    if (!empty($eInfo['nip']) && strtolower($eInfo['nip']) === strtolower(trim($row['parent_nip']))) {
+                        $parentIdx = $eIdx;
+                        break;
+                    }
+                }
+            }
+
+            // B. By explicit parent_name
+            if ($parentIdx === null && !empty($row['parent_name'])) {
+                foreach ($employeeRows as $eIdx => $eInfo) {
+                    if (!empty($eInfo['nama']) && strtolower($eInfo['nama']) === strtolower(trim($row['parent_name']))) {
+                        $parentIdx = $eIdx;
+                        break;
+                    }
+                }
+            }
+
+            // C. By KK match
+            $noKk = trim($row['nomor_kartu_keluarga'] ?? '');
+            if ($parentIdx === null && !empty($noKk)) {
+                foreach ($employeeRows as $eIdx => $eInfo) {
+                    if (!empty($eInfo['noKk']) && $eInfo['noKk'] === $noKk) {
+                        $parentIdx = $eIdx;
+                        break;
+                    }
+                }
+            }
+
+            // D. SMART LOOKAHEAD: Suami / Kepala Keluarga positioned ABOVE female employee
+            $pisat = strtoupper(trim($row['pisat'] ?? $row['pisat_bpjs'] ?? ''));
+            $gender = strtoupper(trim($row['jenis_kelamin'] ?? ''));
+            $isHusband = str_contains($pisat, '2') || str_contains($pisat, 'SUAMI') || str_contains($gender, 'LAKI') || $gender === '1';
+
+            if ($parentIdx === null && $isHusband) {
+                foreach ($employeeRows as $eIdx => $eInfo) {
+                    if ($eIdx > $index) {
+                        $isFemale = str_contains($eInfo['gender'], 'PEREMPUAN') || str_contains($eInfo['gender'], 'WANITA') || $eInfo['gender'] === '2' || $eInfo['gender'] === 'P';
+                        if ($isFemale || (!empty($row['alamat']) && !empty($eInfo['alamat']) && $row['alamat'] === $eInfo['alamat'])) {
+                            $parentIdx = $eIdx;
+                            break;
+                        }
+                        // Only inspect immediate next employee block
+                        break;
+                    }
+                }
+            }
+
+            // E. Fallback to nearest preceding employee
+            if ($parentIdx === null) {
+                $prev = array_filter(array_keys($employeeRows), fn($k) => $k < $index);
+                if (!empty($prev)) {
+                    $parentIdx = max($prev);
+                } else {
+                    // If no preceding employee, lookahead to first upcoming employee
+                    $next = array_filter(array_keys($employeeRows), fn($k) => $k > $index);
+                    if (!empty($next)) {
+                        $parentIdx = min($next);
+                    }
+                }
+            }
+
+            $familyParentIndexMap[$index] = $parentIdx;
+        }
+
+        // -------------------------------------------------------------
+        // STEP 3: EXECUTE - PASS 1: UPSERT PRINCIPAL EMPLOYEES
+        // -------------------------------------------------------------
+        $savedEmployees = []; // row_index => Employee model
+        $lastProcessedEmployee = null;
+
+        foreach ($items as $index => $row) {
+            if (!isset($employeeRows[$index])) continue;
             $lineNum = $index + 1;
 
             $nama = trim($row['nama_lengkap'] ?? $row['nama'] ?? '');
             $nip = trim($row['nip'] ?? '');
             $nik = trim($row['nik'] ?? '');
-            $jabatan = trim($row['jabatan'] ?? '');
-            $pisat = trim($row['pisat'] ?? $row['pisat_bpjs'] ?? '');
             $noKk = trim($row['nomor_kartu_keluarga'] ?? '');
 
             if (empty($nama)) {
                 $skipped++;
-                $errorDetails[] = "Baris {$lineNum}: Nama kosong";
+                $errorDetails[] = "Baris {$lineNum}: Nama karyawan kosong";
                 continue;
             }
 
-            // Determine if this row is a Family Member (Istri / Suami / Anak):
-            // It is a family member if:
-            // 1. Explicitly marked as is_family in row data, OR
-            // 2. NIP is empty AND Jabatan is empty AND ($currentEmployee is present AND ($pisat in ['2','3','4','SUAMI','ISTRI','ANAK'] or empty noKk/matching noKk))
-            $isExplicitFamily = !empty($row['is_family']) || $row['is_family'] === true;
-            $isPisatFamily = in_array($pisat, ['2', '3', '4', '2. SUAMI', '3. ISTRI', '4. ANAK', 'SUAMI', 'ISTRI', 'ANAK']);
-            $isImplicitFamily = empty($nip) && empty($jabatan) && empty($row['in']) && ($currentEmployee !== null);
+            // Find existing employee
+            $existingEmployee = null;
+            if (!empty($nip)) {
+                $existingEmployee = Employee::where('nip', $nip)->first();
+            }
+            if (!$existingEmployee && !empty($nik)) {
+                $existingEmployee = Employee::where('nik', $nik)->first();
+            }
 
-            $isFamilyRow = $isExplicitFamily || ($isImplicitFamily && ($isPisatFamily || empty($noKk) || ($currentEmployee && $currentEmployee->nomor_kartu_keluarga === $noKk)));
+            $dept = !empty($row['departemen']) ? trim($row['departemen']) : null;
+            if ($dept) {
+                Department::firstOrCreate(['name' => $dept]);
+            }
 
-            if ($isFamilyRow && $currentEmployee) {
-                // ================================
-                // UPSERT EMPLOYEE FAMILY MEMBER
-                // ================================
-                try {
-                    // Infer Hubungan
-                    $hubungan = 'ANGGOTA KELUARGA';
-                    if (!empty($row['hubungan'])) {
-                        $hubungan = trim($row['hubungan']);
-                    } elseif (str_contains($pisat, '2') || str_contains(strtoupper($pisat), 'SUAMI')) {
-                        $hubungan = 'SUAMI';
-                    } elseif (str_contains($pisat, '3') || str_contains(strtoupper($pisat), 'ISTRI')) {
-                        $hubungan = 'ISTRI';
-                    } elseif (str_contains($pisat, '4') || str_contains(strtoupper($pisat), 'ANAK')) {
-                        $hubungan = 'ANAK';
-                    } else {
-                        $gender = strtoupper(trim($row['jenis_kelamin'] ?? ''));
-                        $statusKawin = strtoupper(trim($row['status_kawin'] ?? ''));
-                        $usia = !empty($row['usia']) ? (int) $row['usia'] : null;
+            $outhalVal = !empty($row['outhal']) ? trim($row['outhal']) : null;
+            $statusKarRaw = strtoupper(trim($row['status_karyawan'] ?? ''));
+            $statusHubRaw = strtoupper(trim($row['status_hubungan_kerja'] ?? ''));
 
-                        if ((str_contains($gender, 'PEREMPUAN') || str_contains($gender, '2')) && (str_contains($statusKawin, 'KAWIN') || str_contains($statusKawin, 'MENIKAH'))) {
-                            $hubungan = 'ISTRI';
-                        } elseif ((str_contains($gender, 'LAKI') || str_contains($gender, '1')) && (str_contains($statusKawin, 'KAWIN') || str_contains($statusKawin, 'MENIKAH'))) {
-                            $hubungan = 'SUAMI';
-                        } elseif ($usia !== null && $usia <= 23) {
-                            $hubungan = 'ANAK';
-                        }
-                    }
-
-                    $familyData = [
-                        'employee_id'             => $currentEmployee->id,
-                        'nama_lengkap'            => $nama,
-                        'hubungan'                => $hubungan,
-                        'pisat'                   => $pisat ?: null,
-                        'nik'                     => $nik ?: null,
-                        'tempat_lahir'            => !empty($row['tempat_lahir']) ? trim($row['tempat_lahir']) : null,
-                        'tanggal_lahir'           => $parseDate($row['tanggal_lahir'] ?? null),
-                        'usia'                    => !empty($row['usia']) ? (int) $row['usia'] : null,
-                        'jenis_kelamin'           => !empty($row['jenis_kelamin']) ? trim($row['jenis_kelamin']) : null,
-                        'status_kawin'            => !empty($row['status_kawin']) ? trim($row['status_kawin']) : null,
-                        'nomor_bpjs_kis'          => !empty($row['nomor_bpjs_kis_anggota_keluarga']) ? trim($row['nomor_bpjs_kis_anggota_keluarga']) : (!empty($row['nomor_bpjs_kis']) ? trim($row['nomor_bpjs_kis']) : null),
-                        'kode_faskes_tk_1'        => !empty($row['kode_faskes_tk_1']) ? trim($row['kode_faskes_tk_1']) : null,
-                        'nama_faskes_tk_1'        => !empty($row['nama_faskes_tk_1']) ? trim($row['nama_faskes_tk_1']) : null,
-                        'kode_faskes_dokter_gigi' => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
-                        'nama_faskes_dokter_gigi' => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
-                        'alamat'                  => !empty($row['alamat']) ? trim($row['alamat']) : $currentEmployee->alamat,
-                    ];
-
-                    // Check if family member already exists (match by employee_id + nama_lengkap)
-                    $existingFamily = EmployeeFamily::where('employee_id', $currentEmployee->id)
-                        ->where('nama_lengkap', $nama)
-                        ->first();
-
-                    if ($existingFamily) {
-                        // Update existing family member with non-null fields
-                        $updateFamilyData = array_filter($familyData, fn($v) => $v !== null && $v !== '');
-                        unset($updateFamilyData['employee_id']); // don't change the FK
-                        $existingFamily->update($updateFamilyData);
-                        $updatedFamilies++;
-                    } else {
-                        EmployeeFamily::create($familyData);
-                        $importedFamilies++;
-                    }
-                } catch (\Exception $e) {
-                    $skipped++;
-                    $errorDetails[] = "Baris {$lineNum} (Keluarga {$nama}): " . $e->getMessage();
-                }
+            if ($statusKarRaw === 'ACTIVE' || (!empty($statusKarRaw) && !str_contains($statusKarRaw, 'NON') && str_contains($statusKarRaw, 'ACTI'))) {
+                $statusKar = 'ACTIVE';
             } else {
-                // ================================
-                // INSERT AS PRINCIPAL EMPLOYEE
-                // ================================
+                $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
+                    || str_contains($statusKarRaw, 'NON')
+                    || str_contains($statusKarRaw, 'TIDAK')
+                    || str_contains($statusKarRaw, 'KELUAR')
+                    || str_contains($statusKarRaw, 'PHK')
+                    || str_contains($statusKarRaw, 'RESIGN')
+                    || str_contains($statusKarRaw, 'OFF');
 
-                // Check existing employee by NIP or NIK for upsert
-                $existingEmployee = null;
-                if (!empty($nip)) {
-                    $existingEmployee = Employee::where('nip', $nip)->first();
-                }
-                if (!$existingEmployee && !empty($nik)) {
-                    $existingEmployee = Employee::where('nik', $nik)->first();
-                }
+                $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
+            }
+            $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
 
-                if ($existingEmployee) {
-                    // ================================
-                    // UPDATE EXISTING EMPLOYEE
-                    // ================================
-                    try {
-                        $dept = !empty($row['departemen']) ? trim($row['departemen']) : null;
-                        if ($dept) {
-                            Department::firstOrCreate(['name' => $dept]);
-                        }
-
-                        $outhalVal = !empty($row['outhal']) ? trim($row['outhal']) : null;
-                        $statusKarRaw = strtoupper(trim($row['status_karyawan'] ?? ''));
-                        $statusHubRaw = strtoupper(trim($row['status_hubungan_kerja'] ?? ''));
-
-                        if ($statusKarRaw === 'ACTIVE' || (!empty($statusKarRaw) && !str_contains($statusKarRaw, 'NON') && str_contains($statusKarRaw, 'ACTI'))) {
-                            $statusKar = 'ACTIVE';
-                        } else {
-                            $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
-                                || str_contains($statusKarRaw, 'NON')
-                                || str_contains($statusKarRaw, 'TIDAK')
-                                || str_contains($statusKarRaw, 'KELUAR')
-                                || str_contains($statusKarRaw, 'PHK')
-                                || str_contains($statusKarRaw, 'RESIGN')
-                                || str_contains($statusKarRaw, 'OFF');
-
-                            $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
-                        }
-                        $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
-
-                        $inParsed = $parseDate($row['in'] ?? null);
-                        $outtodayParsed = $parseDate($row['outtoday'] ?? null);
-                        if ($statusHub === 'PKWT' && !empty($inParsed) && empty($outtodayParsed)) {
-                            try {
-                                $outtodayParsed = Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
-                            } catch (\Exception $e) {}
-                        }
-
-                        // Build update data — only overwrite non-empty values from Excel
-                        $updateData = array_filter([
-                            'bendera'                       => !empty($row['bendera']) ? trim($row['bendera']) : null,
-                            'kode'                          => !empty($row['kode']) ? trim($row['kode']) : null,
-                            'pisat'                         => !empty($row['pisat']) ? trim($row['pisat']) : null,
-                            'peserta'                       => !empty($row['peserta']) ? trim($row['peserta']) : null,
-                            'nip'                           => $nip ?: null,
-                            'jabatan'                       => !empty($row['jabatan']) ? trim($row['jabatan']) : null,
-                            'departemen'                    => $dept,
-                            'in'                            => $inParsed,
-                            'outtoday'                      => $outtodayParsed,
-                            'outhal'                        => $outhalVal,
-                            'kontrak'                       => !empty($row['kontrak']) ? trim($row['kontrak']) : null,
-                            'masa_kerja'                    => !empty($row['masa_kerja']) ? trim($row['masa_kerja']) : null,
-                            'status_hubungan_kerja'         => $statusHub,
-                            'status_karyawan'               => $statusKar,
-                            'mutasi_pt_jabatan'             => !empty($row['mutasi_pt_jabatan']) ? trim($row['mutasi_pt_jabatan']) : null,
-                            'lama_mutasi'                   => !empty($row['lama_mutasi']) ? trim($row['lama_mutasi']) : null,
-                            'no_telp'                       => !empty($row['no_telp']) ? trim($row['no_telp']) : null,
-                            'email'                         => !empty($row['email']) ? trim($row['email']) : null,
-                            'npwp'                          => !empty($row['npwp']) ? trim($row['npwp']) : null,
-                            'pendidikan_terakhir'           => !empty($row['pendidikan_terakhir']) ? trim($row['pendidikan_terakhir']) : null,
-                            'suku'                          => !empty($row['suku']) ? trim($row['suku']) : null,
-                            'agama'                         => !empty($row['agama']) ? trim($row['agama']) : null,
-                            'nomor_kartu_keluarga'          => $noKk ?: null,
-                            'nik'                           => $nik ?: null,
-                            'nama_lengkap'                  => $nama,
-                            'tempat_lahir'                  => !empty($row['tempat_lahir']) ? trim($row['tempat_lahir']) : null,
-                            'tanggal_lahir'                 => $parseDate($row['tanggal_lahir'] ?? null),
-                            'usia'                          => !empty($row['usia']) ? (int) $row['usia'] : null,
-                            'jenis_kelamin'                 => !empty($row['jenis_kelamin']) ? trim($row['jenis_kelamin']) : null,
-                            'status_kawin'                  => !empty($row['status_kawin']) ? trim($row['status_kawin']) : null,
-                            'tanggal_perkawinan_perceraian' => $parseDate($row['tanggal_perkawinan_perceraian'] ?? null),
-                            'lokal_nonlokal'                => !empty($row['lokal_nonlokal']) ? trim($row['lokal_nonlokal']) : null,
-                            'kewarganegaraan'               => !empty($row['kewarganegaraan']) ? trim($row['kewarganegaraan']) : null,
-                            'alamat'                        => !empty($row['alamat']) ? trim($row['alamat']) : null,
-                            'rt'                            => !empty($row['rt']) ? trim($row['rt']) : null,
-                            'rw'                            => !empty($row['rw']) ? trim($row['rw']) : null,
-                            'kelurahan'                     => !empty($row['kelurahan']) ? trim($row['kelurahan']) : null,
-                            'kecamatan'                     => !empty($row['kecamatan']) ? trim($row['kecamatan']) : null,
-                            'kabupaten'                     => !empty($row['kabupaten']) ? trim($row['kabupaten']) : null,
-                            'provinsi'                      => !empty($row['provinsi']) ? trim($row['provinsi']) : null,
-                            'kode_pos'                      => !empty($row['kode_pos']) ? trim($row['kode_pos']) : null,
-                            'domisili'                      => !empty($row['domisili']) ? trim($row['domisili']) : null,
-                            'nama_ayah'                     => !empty($row['nama_ayah']) ? trim($row['nama_ayah']) : null,
-                            'nama_ibu'                      => !empty($row['nama_ibu']) ? trim($row['nama_ibu']) : null,
-                            'nomor_bpjstk'                  => !empty($row['nomor_bpjstk']) ? trim($row['nomor_bpjstk']) : null,
-                            'nomor_bpjs_kis_peserta'        => !empty($row['nomor_bpjs_kis_peserta']) ? trim($row['nomor_bpjs_kis_peserta']) : null,
-                            'nomor_bpjs_kis_anggota_keluarga' => !empty($row['nomor_bpjs_kis_anggota_keluarga']) ? trim($row['nomor_bpjs_kis_anggota_keluarga']) : null,
-                            'jenis_mutasi'                  => !empty($row['jenis_mutasi']) ? trim($row['jenis_mutasi']) : null,
-                            'pisat_bpjs'                    => !empty($row['pisat_bpjs']) ? trim($row['pisat_bpjs']) : null,
-                            'alamat_tempat_tinggal_bpjs'    => !empty($row['alamat_tempat_tinggal_bpjs']) ? trim($row['alamat_tempat_tinggal_bpjs']) : null,
-                            'kode_faskes_tk_1'              => !empty($row['kode_faskes_tk_1']) ? trim($row['kode_faskes_tk_1']) : null,
-                            'nama_faskes_tk_1'              => !empty($row['nama_faskes_tk_1']) ? trim($row['nama_faskes_tk_1']) : null,
-                            'kode_faskes_dokter_gigi'       => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
-                            'nama_faskes_dokter_gigi'       => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
-                            'nomor_telepon_rumus'           => !empty($row['nomor_telepon_rumus']) ? trim($row['nomor_telepon_rumus']) : null,
-                            'email_rumus'                   => !empty($row['email_rumus']) ? trim($row['email_rumus']) : null,
-                            'npp'                           => !empty($row['npp']) ? trim($row['npp']) : null,
-                            'gaji_pokok_tunjangan_tetap'    => !empty($row['gaji_pokok_tunjangan_tetap']) ? trim($row['gaji_pokok_tunjangan_tetap']) : null,
-                            'kewarganegaraan_bpjs'          => !empty($row['kewarganegaraan_bpjs']) ? trim($row['kewarganegaraan_bpjs']) : null,
-                            'sub_cabang'                    => !empty($row['sub_cabang']) ? trim($row['sub_cabang']) : null,
-                            'catatan'                       => !empty($row['catatan']) ? trim($row['catatan']) : null,
-                        ], fn($v) => $v !== null && $v !== '');
-
-                        // Always include nama_lengkap and status fields even if they seem "empty"
-                        $updateData['nama_lengkap'] = $nama;
-                        $updateData['status_karyawan'] = $statusKar;
-                        $updateData['status_hubungan_kerja'] = $statusHub;
-
-                        $existingEmployee->update($updateData);
-
-                        // Sync contracts for updated employee
-                        if (!empty($row['contracts']) && is_array($row['contracts'])) {
-                            foreach ($row['contracts'] as $c) {
-                                if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
-                                    $cStart = $parseDate($c['tanggal_mulai']);
-                                    $cEnd = $parseDate($c['tanggal_selesai']);
-                                    if ($cStart && $cEnd) {
-                                        $diffM = (int) max(1, ceil(abs(strtotime($cEnd) - strtotime($cStart)) / (30 * 86400)));
-                                        // Upsert contract by employee_id + kontrak_ke
-                                        ContractHistory::updateOrCreate(
-                                            [
-                                                'employee_id' => $existingEmployee->id,
-                                                'kontrak_ke'  => (int) ($c['kontrak_ke'] ?? 1),
-                                            ],
-                                            [
-                                                'tanggal_mulai'      => $cStart,
-                                                'tanggal_selesai'    => $cEnd,
-                                                'masa_kontrak_bulan' => !empty($c['masa_kontrak_bulan']) ? (int) $c['masa_kontrak_bulan'] : $diffM,
-                                                'diserahkan'         => !empty($c['diserahkan']) ? trim($c['diserahkan']) : null,
-                                                'catatan'            => !empty($c['catatan']) ? trim($c['catatan']) : null,
-                                            ]
-                                        );
-                                    }
-                                }
-                            }
-                        }
-
-                        $currentEmployee = $existingEmployee;
-                        $updatedEmployees++;
-                    } catch (\Exception $e) {
-                        $skipped++;
-                        $errorDetails[] = "Baris {$lineNum} (Update {$nama}): " . $e->getMessage();
-                    }
-                    continue;
-                }
-
-                $dept = !empty($row['departemen']) ? trim($row['departemen']) : null;
-                if ($dept) {
-                    Department::firstOrCreate(['name' => $dept]);
-                }
-
-                $outhalVal = !empty($row['outhal']) ? trim($row['outhal']) : null;
-                $statusKarRaw = strtoupper(trim($row['status_karyawan'] ?? ''));
-                $statusHubRaw = strtoupper(trim($row['status_hubungan_kerja'] ?? ''));
-
-                if ($statusKarRaw === 'ACTIVE' || (!empty($statusKarRaw) && !str_contains($statusKarRaw, 'NON') && str_contains($statusKarRaw, 'ACTI'))) {
-                    $statusKar = 'ACTIVE';
-                } else {
-                    $isNonActive = (!empty($outhalVal) && $outhalVal !== '-')
-                        || str_contains($statusKarRaw, 'NON')
-                        || str_contains($statusKarRaw, 'TIDAK')
-                        || str_contains($statusKarRaw, 'KELUAR')
-                        || str_contains($statusKarRaw, 'PHK')
-                        || str_contains($statusKarRaw, 'RESIGN')
-                        || str_contains($statusKarRaw, 'OFF');
-
-                    $statusKar = $isNonActive ? 'NON ACTIVE' : 'ACTIVE';
-                }
-                $statusHub = str_contains($statusHubRaw, 'SKPKT') ? 'SKPKT' : (str_contains($statusHubRaw, 'PKWTT') || str_contains($statusHubRaw, 'TETAP') ? 'PKWTT' : 'PKWT');
-
-                $inParsed = $parseDate($row['in'] ?? null);
-                $outtodayParsed = $parseDate($row['outtoday'] ?? null);
-                if ($statusHub === 'PKWT' && !empty($inParsed) && empty($outtodayParsed)) {
-                    try {
-                        $outtodayParsed = Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
-                    } catch (\Exception $e) {}
-                }
-
+            $inParsed = $parseDate($row['in'] ?? null);
+            $outtodayParsed = $parseDate($row['outtoday'] ?? null);
+            if ($statusHub === 'PKWT' && !empty($inParsed) && empty($outtodayParsed)) {
                 try {
-                    $newEmployee = Employee::create([
-                        'bendera'                       => !empty($row['bendera']) ? trim($row['bendera']) : null,
-                        'kode'                          => !empty($row['kode']) ? trim($row['kode']) : null,
-                        'pisat'                         => !empty($row['pisat']) ? trim($row['pisat']) : null,
-                        'peserta'                       => !empty($row['peserta']) ? trim($row['peserta']) : null,
-                        'nip'                           => $nip ?: null,
-                        'jabatan'                       => !empty($row['jabatan']) ? trim($row['jabatan']) : null,
-                        'departemen'                    => $dept,
-                        'in'                            => $inParsed,
-                        'outtoday'                      => $outtodayParsed,
-                        'outhal'                        => $outhalVal,
-                        'kontrak'                       => !empty($row['kontrak']) ? trim($row['kontrak']) : null,
-                        'masa_kerja'                    => !empty($row['masa_kerja']) ? trim($row['masa_kerja']) : null,
-                        'status_hubungan_kerja'         => $statusHub,
-                        'status_karyawan'               => $statusKar,
-                        'mutasi_pt_jabatan'             => !empty($row['mutasi_pt_jabatan']) ? trim($row['mutasi_pt_jabatan']) : null,
-                        'lama_mutasi'                   => !empty($row['lama_mutasi']) ? trim($row['lama_mutasi']) : null,
-                        'no_telp'                       => !empty($row['no_telp']) ? trim($row['no_telp']) : null,
-                        'email'                         => !empty($row['email']) ? trim($row['email']) : null,
-                        'npwp'                          => !empty($row['npwp']) ? trim($row['npwp']) : null,
-                        'pendidikan_terakhir'           => !empty($row['pendidikan_terakhir']) ? trim($row['pendidikan_terakhir']) : null,
-                        'suku'                          => !empty($row['suku']) ? trim($row['suku']) : null,
-                        'agama'                         => !empty($row['agama']) ? trim($row['agama']) : null,
-                        'nomor_kartu_keluarga'          => $noKk ?: null,
-                        'nik'                           => $nik ?: null,
-                        'nama_lengkap'                  => $nama,
-                        'tempat_lahir'                  => !empty($row['tempat_lahir']) ? trim($row['tempat_lahir']) : null,
-                        'tanggal_lahir'                 => $parseDate($row['tanggal_lahir'] ?? null),
-                        'usia'                          => !empty($row['usia']) ? (int) $row['usia'] : null,
-                        'jenis_kelamin'                 => !empty($row['jenis_kelamin']) ? trim($row['jenis_kelamin']) : null,
-                        'status_kawin'                  => !empty($row['status_kawin']) ? trim($row['status_kawin']) : null,
-                        'tanggal_perkawinan_perceraian' => $parseDate($row['tanggal_perkawinan_perceraian'] ?? null),
-                        'lokal_nonlokal'                => !empty($row['lokal_nonlokal']) ? trim($row['lokal_nonlokal']) : null,
-                        'kewarganegaraan'               => !empty($row['kewarganegaraan']) ? trim($row['kewarganegaraan']) : 'WNI',
-                        'alamat'                        => !empty($row['alamat']) ? trim($row['alamat']) : null,
-                        'rt'                            => !empty($row['rt']) ? trim($row['rt']) : null,
-                        'rw'                            => !empty($row['rw']) ? trim($row['rw']) : null,
-                        'kelurahan'                     => !empty($row['kelurahan']) ? trim($row['kelurahan']) : null,
-                        'kecamatan'                     => !empty($row['kecamatan']) ? trim($row['kecamatan']) : null,
-                        'kabupaten'                     => !empty($row['kabupaten']) ? trim($row['kabupaten']) : null,
-                        'provinsi'                      => !empty($row['provinsi']) ? trim($row['provinsi']) : null,
-                        'kode_pos'                      => !empty($row['kode_pos']) ? trim($row['kode_pos']) : null,
-                        'domisili'                      => !empty($row['domisili']) ? trim($row['domisili']) : null,
-                        'nama_ayah'                     => !empty($row['nama_ayah']) ? trim($row['nama_ayah']) : null,
-                        'nama_ibu'                      => !empty($row['nama_ibu']) ? trim($row['nama_ibu']) : null,
-                        'nomor_bpjstk'                  => !empty($row['nomor_bpjstk']) ? trim($row['nomor_bpjstk']) : null,
-                        'nomor_bpjs_kis_peserta'        => !empty($row['nomor_bpjs_kis_peserta']) ? trim($row['nomor_bpjs_kis_peserta']) : null,
-                        'nomor_bpjs_kis_anggota_keluarga' => !empty($row['nomor_bpjs_kis_anggota_keluarga']) ? trim($row['nomor_bpjs_kis_anggota_keluarga']) : null,
-                        'jenis_mutasi'                  => !empty($row['jenis_mutasi']) ? trim($row['jenis_mutasi']) : null,
-                        'pisat_bpjs'                    => !empty($row['pisat_bpjs']) ? trim($row['pisat_bpjs']) : null,
-                        'alamat_tempat_tinggal_bpjs'    => !empty($row['alamat_tempat_tinggal_bpjs']) ? trim($row['alamat_tempat_tinggal_bpjs']) : null,
-                        'kode_faskes_tk_1'              => !empty($row['kode_faskes_tk_1']) ? trim($row['kode_faskes_tk_1']) : null,
-                        'nama_faskes_tk_1'              => !empty($row['nama_faskes_tk_1']) ? trim($row['nama_faskes_tk_1']) : null,
-                        'kode_faskes_dokter_gigi'       => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
-                        'nama_faskes_dokter_gigi'       => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
-                        'nomor_telepon_rumus'           => !empty($row['nomor_telepon_rumus']) ? trim($row['nomor_telepon_rumus']) : null,
-                        'email_rumus'                   => !empty($row['email_rumus']) ? trim($row['email_rumus']) : null,
-                        'npp'                           => !empty($row['npp']) ? trim($row['npp']) : null,
-                        'gaji_pokok_tunjangan_tetap'    => !empty($row['gaji_pokok_tunjangan_tetap']) ? trim($row['gaji_pokok_tunjangan_tetap']) : null,
-                        'kewarganegaraan_bpjs'          => !empty($row['kewarganegaraan_bpjs']) ? trim($row['kewarganegaraan_bpjs']) : '1 = WNI',
-                        'sub_cabang'                    => !empty($row['sub_cabang']) ? trim($row['sub_cabang']) : null,
-                        'catatan'                       => !empty($row['catatan']) ? trim($row['catatan']) : null,
-                    ]);
+                    $outtodayParsed = Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
+                } catch (\Exception $e) {}
+            }
 
-                    // Sync contracts 1 to 10 if provided in import row
-                    $hasImportedContracts = false;
-                    if (!empty($row['contracts']) && is_array($row['contracts'])) {
-                        foreach ($row['contracts'] as $c) {
-                            if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
-                                $cStart = $parseDate($c['tanggal_mulai']);
-                                $cEnd = $parseDate($c['tanggal_selesai']);
-                                if ($cStart && $cEnd) {
-                                    $diffM = (int) max(1, ceil(abs(strtotime($cEnd) - strtotime($cStart)) / (30 * 86400)));
-                                    ContractHistory::create([
-                                        'employee_id'        => $newEmployee->id,
-                                        'kontrak_ke'         => (int) ($c['kontrak_ke'] ?? 1),
+            $empData = [
+                'bendera'                       => !empty($row['bendera']) ? trim($row['bendera']) : null,
+                'kode'                          => !empty($row['kode']) ? trim($row['kode']) : null,
+                'pisat'                         => !empty($row['pisat']) ? trim($row['pisat']) : null,
+                'peserta'                       => !empty($row['peserta']) ? trim($row['peserta']) : null,
+                'nip'                           => $nip ?: null,
+                'jabatan'                       => !empty($row['jabatan']) ? trim($row['jabatan']) : null,
+                'departemen'                    => $dept,
+                'in'                            => $inParsed,
+                'outtoday'                      => $outtodayParsed,
+                'outhal'                        => $outhalVal,
+                'kontrak'                       => !empty($row['kontrak']) ? trim($row['kontrak']) : null,
+                'masa_kerja'                    => !empty($row['masa_kerja']) ? trim($row['masa_kerja']) : null,
+                'status_hubungan_kerja'         => $statusHub,
+                'status_karyawan'               => $statusKar,
+                'mutasi_pt_jabatan'             => !empty($row['mutasi_pt_jabatan']) ? trim($row['mutasi_pt_jabatan']) : null,
+                'lama_mutasi'                   => !empty($row['lama_mutasi']) ? trim($row['lama_mutasi']) : null,
+                'no_telp'                       => !empty($row['no_telp']) ? trim($row['no_telp']) : null,
+                'email'                         => !empty($row['email']) ? trim($row['email']) : null,
+                'npwp'                          => !empty($row['npwp']) ? trim($row['npwp']) : null,
+                'pendidikan_terakhir'           => !empty($row['pendidikan_terakhir']) ? trim($row['pendidikan_terakhir']) : null,
+                'suku'                          => !empty($row['suku']) ? trim($row['suku']) : null,
+                'agama'                         => !empty($row['agama']) ? trim($row['agama']) : null,
+                'nomor_kartu_keluarga'          => $noKk ?: null,
+                'nik'                           => $nik ?: null,
+                'nama_lengkap'                  => $nama,
+                'tempat_lahir'                  => !empty($row['tempat_lahir']) ? trim($row['tempat_lahir']) : null,
+                'tanggal_lahir'                 => $parseDate($row['tanggal_lahir'] ?? null),
+                'usia'                          => !empty($row['usia']) ? (int) $row['usia'] : null,
+                'jenis_kelamin'                 => !empty($row['jenis_kelamin']) ? trim($row['jenis_kelamin']) : null,
+                'status_kawin'                  => !empty($row['status_kawin']) ? trim($row['status_kawin']) : null,
+                'tanggal_perkawinan_perceraian' => $parseDate($row['tanggal_perkawinan_perceraian'] ?? null),
+                'lokal_nonlokal'                => !empty($row['lokal_nonlokal']) ? trim($row['lokal_nonlokal']) : null,
+                'kewarganegaraan'               => !empty($row['kewarganegaraan']) ? trim($row['kewarganegaraan']) : 'WNI',
+                'alamat'                        => !empty($row['alamat']) ? trim($row['alamat']) : null,
+                'rt'                            => !empty($row['rt']) ? trim($row['rt']) : null,
+                'rw'                            => !empty($row['rw']) ? trim($row['rw']) : null,
+                'kelurahan'                     => !empty($row['kelurahan']) ? trim($row['kelurahan']) : null,
+                'kecamatan'                     => !empty($row['kecamatan']) ? trim($row['kecamatan']) : null,
+                'kabupaten'                     => !empty($row['kabupaten']) ? trim($row['kabupaten']) : null,
+                'provinsi'                      => !empty($row['provinsi']) ? trim($row['provinsi']) : null,
+                'kode_pos'                      => !empty($row['kode_pos']) ? trim($row['kode_pos']) : null,
+                'domisili'                      => !empty($row['domisili']) ? trim($row['domisili']) : null,
+                'nama_ayah'                     => !empty($row['nama_ayah']) ? trim($row['nama_ayah']) : null,
+                'nama_ibu'                      => !empty($row['nama_ibu']) ? trim($row['nama_ibu']) : null,
+                'nomor_bpjstk'                  => !empty($row['nomor_bpjstk']) ? trim($row['nomor_bpjstk']) : null,
+                'nomor_bpjs_kis_peserta'        => !empty($row['nomor_bpjs_kis_peserta']) ? trim($row['nomor_bpjs_kis_peserta']) : null,
+                'nomor_bpjs_kis_anggota_keluarga' => !empty($row['nomor_bpjs_kis_anggota_keluarga']) ? trim($row['nomor_bpjs_kis_anggota_keluarga']) : null,
+                'jenis_mutasi'                  => !empty($row['jenis_mutasi']) ? trim($row['jenis_mutasi']) : null,
+                'pisat_bpjs'                    => !empty($row['pisat_bpjs']) ? trim($row['pisat_bpjs']) : null,
+                'alamat_tempat_tinggal_bpjs'    => !empty($row['alamat_tempat_tinggal_bpjs']) ? trim($row['alamat_tempat_tinggal_bpjs']) : null,
+                'kode_faskes_tk_1'              => !empty($row['kode_faskes_tk_1']) ? trim($row['kode_faskes_tk_1']) : null,
+                'nama_faskes_tk_1'              => !empty($row['nama_faskes_tk_1']) ? trim($row['nama_faskes_tk_1']) : null,
+                'kode_faskes_dokter_gigi'       => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
+                'nama_faskes_dokter_gigi'       => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
+                'nomor_telepon_rumus'           => !empty($row['nomor_telepon_rumus']) ? trim($row['nomor_telepon_rumus']) : null,
+                'email_rumus'                   => !empty($row['email_rumus']) ? trim($row['email_rumus']) : null,
+                'npp'                           => !empty($row['npp']) ? trim($row['npp']) : null,
+                'gaji_pokok_tunjangan_tetap'    => !empty($row['gaji_pokok_tunjangan_tetap']) ? trim($row['gaji_pokok_tunjangan_tetap']) : null,
+                'kewarganegaraan_bpjs'          => !empty($row['kewarganegaraan_bpjs']) ? trim($row['kewarganegaraan_bpjs']) : '1 = WNI',
+                'sub_cabang'                    => !empty($row['sub_cabang']) ? trim($row['sub_cabang']) : null,
+                'catatan'                       => !empty($row['catatan']) ? trim($row['catatan']) : null,
+            ];
+
+            try {
+                if ($existingEmployee) {
+                    $updateData = array_filter($empData, fn($v) => $v !== null && $v !== '');
+                    $updateData['nama_lengkap'] = $nama;
+                    $updateData['status_karyawan'] = $statusKar;
+                    $updateData['status_hubungan_kerja'] = $statusHub;
+                    $existingEmployee->update($updateData);
+                    $targetEmpModel = $existingEmployee;
+                    $updatedEmployees++;
+                } else {
+                    $targetEmpModel = Employee::create($empData);
+                    $importedEmployees++;
+                }
+
+                // Sync Contracts 1-10
+                $hasImportedContracts = false;
+                if (!empty($row['contracts']) && is_array($row['contracts'])) {
+                    foreach ($row['contracts'] as $c) {
+                        if (!empty($c['tanggal_mulai']) && !empty($c['tanggal_selesai'])) {
+                            $cStart = $parseDate($c['tanggal_mulai']);
+                            $cEnd = $parseDate($c['tanggal_selesai']);
+                            if ($cStart && $cEnd) {
+                                $diffM = (int) max(1, ceil(abs(strtotime($cEnd) - strtotime($cStart)) / (30 * 86400)));
+                                ContractHistory::updateOrCreate(
+                                    [
+                                        'employee_id' => $targetEmpModel->id,
+                                        'kontrak_ke'  => (int) ($c['kontrak_ke'] ?? 1),
+                                    ],
+                                    [
                                         'tanggal_mulai'      => $cStart,
                                         'tanggal_selesai'    => $cEnd,
                                         'masa_kontrak_bulan' => !empty($c['masa_kontrak_bulan']) ? (int) $c['masa_kontrak_bulan'] : $diffM,
                                         'diserahkan'         => !empty($c['diserahkan']) ? trim($c['diserahkan']) : null,
                                         'catatan'            => !empty($c['catatan']) ? trim($c['catatan']) : null,
-                                    ]);
-                                    $hasImportedContracts = true;
-                                }
+                                    ]
+                                );
+                                $hasImportedContracts = true;
                             }
                         }
                     }
+                }
 
-                    if (!$hasImportedContracts && $statusHub === 'PKWT' && !empty($inParsed)) {
-                        try {
-                            $effEnd = $outtodayParsed ?: Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
-                            ContractHistory::create([
-                                'employee_id'        => $newEmployee->id,
-                                'kontrak_ke'         => 1,
+                if (!$hasImportedContracts && $statusHub === 'PKWT' && !empty($inParsed)) {
+                    try {
+                        $effEnd = $outtodayParsed ?: Carbon::parse($inParsed)->addMonths(6)->subDay()->format('Y-m-d');
+                        ContractHistory::firstOrCreate(
+                            ['employee_id' => $targetEmpModel->id, 'kontrak_ke' => 1],
+                            [
                                 'tanggal_mulai'      => $inParsed,
                                 'tanggal_selesai'    => $effEnd,
                                 'masa_kontrak_bulan' => 6,
                                 'diserahkan'         => 'Sudah',
                                 'catatan'            => 'Kontrak Pertama (Minimal 6 Bulan)',
-                            ]);
-                        } catch (\Exception $e) {}
-                    }
-
-                    $currentEmployee = $newEmployee;
-                    $importedEmployees++;
-                } catch (\Exception $e) {
-                    $skipped++;
-                    $errorDetails[] = "Baris {$lineNum} (Karyawan {$nama}): " . $e->getMessage();
+                            ]
+                        );
+                    } catch (\Exception $e) {}
                 }
+
+                $savedEmployees[$index] = $targetEmpModel;
+                $lastProcessedEmployee = $targetEmpModel;
+            } catch (\Exception $e) {
+                $skipped++;
+                $errorDetails[] = "Baris {$lineNum} (Karyawan {$nama}): " . $e->getMessage();
+            }
+        }
+
+        // -------------------------------------------------------------
+        // STEP 4: EXECUTE - PASS 2: UPSERT FAMILY MEMBERS
+        // -------------------------------------------------------------
+        foreach ($items as $index => $row) {
+            if (isset($employeeRows[$index])) continue;
+            $lineNum = $index + 1;
+
+            $nama = trim($row['nama_lengkap'] ?? $row['nama'] ?? '');
+            if (empty($nama)) {
+                $skipped++;
+                $errorDetails[] = "Baris {$lineNum}: Nama keluarga kosong";
+                continue;
+            }
+
+            $parentIdx = $familyParentIndexMap[$index] ?? null;
+            $parentEmp = ($parentIdx !== null && isset($savedEmployees[$parentIdx])) 
+                ? $savedEmployees[$parentIdx] 
+                : $lastProcessedEmployee;
+
+            if (!$parentEmp) {
+                $skipped++;
+                $errorDetails[] = "Baris {$lineNum} (Keluarga {$nama}): Karyawan induk tidak ditemukan";
+                continue;
+            }
+
+            try {
+                $pisat = trim($row['pisat'] ?? $row['pisat_bpjs'] ?? '');
+                $nik = trim($row['nik'] ?? '');
+
+                // Infer Hubungan
+                $hubungan = 'ANGGOTA KELUARGA';
+                if (!empty($row['hubungan'])) {
+                    $hubungan = trim($row['hubungan']);
+                } elseif (str_contains($pisat, '2') || str_contains(strtoupper($pisat), 'SUAMI')) {
+                    $hubungan = 'SUAMI';
+                } elseif (str_contains($pisat, '3') || str_contains(strtoupper($pisat), 'ISTRI')) {
+                    $hubungan = 'ISTRI';
+                } elseif (str_contains($pisat, '4') || str_contains(strtoupper($pisat), 'ANAK')) {
+                    $hubungan = 'ANAK';
+                } else {
+                    $gender = strtoupper(trim($row['jenis_kelamin'] ?? ''));
+                    $statusKawin = strtoupper(trim($row['status_kawin'] ?? ''));
+                    $usia = !empty($row['usia']) ? (int) $row['usia'] : null;
+
+                    if ((str_contains($gender, 'PEREMPUAN') || str_contains($gender, '2')) && (str_contains($statusKawin, 'KAWIN') || str_contains($statusKawin, 'MENIKAH'))) {
+                        $hubungan = 'ISTRI';
+                    } elseif ((str_contains($gender, 'LAKI') || str_contains($gender, '1')) && (str_contains($statusKawin, 'KAWIN') || str_contains($statusKawin, 'MENIKAH'))) {
+                        $hubungan = 'SUAMI';
+                    } elseif ($usia !== null && $usia <= 23) {
+                        $hubungan = 'ANAK';
+                    }
+                }
+
+                $familyData = [
+                    'employee_id'             => $parentEmp->id,
+                    'nama_lengkap'            => $nama,
+                    'hubungan'                => $hubungan,
+                    'pisat'                   => $pisat ?: null,
+                    'nik'                     => $nik ?: null,
+                    'tempat_lahir'            => !empty($row['tempat_lahir']) ? trim($row['tempat_lahir']) : null,
+                    'tanggal_lahir'           => $parseDate($row['tanggal_lahir'] ?? null),
+                    'usia'                    => !empty($row['usia']) ? (int) $row['usia'] : null,
+                    'jenis_kelamin'           => !empty($row['jenis_kelamin']) ? trim($row['jenis_kelamin']) : null,
+                    'status_kawin'            => !empty($row['status_kawin']) ? trim($row['status_kawin']) : null,
+                    'nomor_bpjs_kis'          => !empty($row['nomor_bpjs_kis_anggota_keluarga']) ? trim($row['nomor_bpjs_kis_anggota_keluarga']) : (!empty($row['nomor_bpjs_kis']) ? trim($row['nomor_bpjs_kis']) : null),
+                    'kode_faskes_tk_1'        => !empty($row['kode_faskes_tk_1']) ? trim($row['kode_faskes_tk_1']) : null,
+                    'nama_faskes_tk_1'        => !empty($row['nama_faskes_tk_1']) ? trim($row['nama_faskes_tk_1']) : null,
+                    'kode_faskes_dokter_gigi' => !empty($row['kode_faskes_dokter_gigi']) ? trim($row['kode_faskes_dokter_gigi']) : null,
+                    'nama_faskes_dokter_gigi' => !empty($row['nama_faskes_dokter_gigi']) ? trim($row['nama_faskes_dokter_gigi']) : null,
+                    'alamat'                  => !empty($row['alamat']) ? trim($row['alamat']) : $parentEmp->alamat,
+                ];
+
+                $existingFamily = EmployeeFamily::where('employee_id', $parentEmp->id)
+                    ->where('nama_lengkap', $nama)
+                    ->first();
+
+                if ($existingFamily) {
+                    $updateFamilyData = array_filter($familyData, fn($v) => $v !== null && $v !== '');
+                    unset($updateFamilyData['employee_id']);
+                    $existingFamily->update($updateFamilyData);
+                    $updatedFamilies++;
+                } else {
+                    EmployeeFamily::create($familyData);
+                    $importedFamilies++;
+                }
+            } catch (\Exception $e) {
+                $skipped++;
+                $errorDetails[] = "Baris {$lineNum} (Keluarga {$nama}): " . $e->getMessage();
             }
         }
 
@@ -1280,6 +1295,173 @@ class EmployeeApiController extends Controller
             'skipped'             => $skipped,
             'error_details'       => $errorDetails,
         ]);
+    }
+
+    /**
+     * REPAIR & RECONCILE FAMILY RELATIONS
+     * Fixes husbands/heads of household misplaced above or under the wrong employee.
+     * Can be run anytime without re-uploading Excel.
+     */
+    public function repairFamilies(): JsonResponse
+    {
+        $fixedCount = 0;
+        $details = [];
+
+        try {
+            DB::beginTransaction();
+
+            // 1. Check all husbands in employee_families
+            $suamiFamilies = EmployeeFamily::where(function ($q) {
+                $q->where('hubungan', 'like', '%SUAMI%')
+                  ->orWhere('pisat', 'like', '%2%')
+                  ->orWhere('pisat', 'like', '%SUAMI%');
+            })->get();
+
+            foreach ($suamiFamilies as $fam) {
+                $parent = Employee::find($fam->employee_id);
+                if (!$parent) continue;
+
+                $parentGender = strtoupper(trim($parent->jenis_kelamin ?? ''));
+                $parentIsMale = str_contains($parentGender, 'LAKI') || $parentGender === '1' || $parentGender === 'L';
+
+                // Check if parent has duplicate husbands
+                $hasMultipleSuamis = EmployeeFamily::where('employee_id', $parent->id)
+                    ->where('id', '!=', $fam->id)
+                    ->where(function ($q) {
+                        $q->where('hubungan', 'like', '%SUAMI%')
+                          ->orWhere('pisat', 'like', '%2%')
+                          ->orWhere('pisat', 'like', '%SUAMI%');
+                    })->exists();
+
+                // Anomaly: Parent is male, OR parent is female but already has another husband
+                if ($parentIsMale || $hasMultipleSuamis) {
+                    $targetFemale = null;
+
+                    // A. Check if any female employee shares the same address
+                    if (!empty($fam->alamat)) {
+                        $targetFemale = Employee::where(function ($q) {
+                                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                                  ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                                  ->orWhere('jenis_kelamin', '2')
+                                  ->orWhere('jenis_kelamin', 'P');
+                            })
+                            ->where('id', '!=', $parent->id)
+                            ->where('alamat', $fam->alamat)
+                            ->first();
+                    }
+
+                    // B. Find the nearest female employee registered after this parent who doesn't have a husband yet
+                    if (!$targetFemale) {
+                        $targetFemale = Employee::where('id', '>', $parent->id)
+                            ->where(function ($q) {
+                                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                                  ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                                  ->orWhere('jenis_kelamin', '2')
+                                  ->orWhere('jenis_kelamin', 'P');
+                            })
+                            ->whereDoesntHave('families', function ($q) {
+                                $q->where('hubungan', 'like', '%SUAMI%')
+                                  ->orWhere('pisat', 'like', '%2%')
+                                  ->orWhere('pisat', 'like', '%SUAMI%');
+                            })
+                            ->orderBy('id', 'asc')
+                            ->first();
+                    }
+
+                    // C. Fallback: closest female employee after parent
+                    if (!$targetFemale) {
+                        $targetFemale = Employee::where('id', '>', $parent->id)
+                            ->where(function ($q) {
+                                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                                  ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                                  ->orWhere('jenis_kelamin', '2')
+                                  ->orWhere('jenis_kelamin', 'P');
+                            })
+                            ->orderBy('id', 'asc')
+                            ->first();
+                    }
+
+                    if ($targetFemale && $targetFemale->id !== $parent->id) {
+                        $oldParentName = $parent->nama_lengkap;
+                        $fam->employee_id = $targetFemale->id;
+                        $fam->save();
+
+                        $fixedCount++;
+                        $details[] = "Kepala Keluarga/Suami '{$fam->nama_lengkap}' dipindahkan dari {$oldParentName} ke '{$targetFemale->nama_lengkap}' (NIP: " . ($targetFemale->nip ?: '-') . ")";
+                    }
+                }
+            }
+
+            // 2. Check orphan employees (heads of household accidentally created as Employee without NIP and Jabatan)
+            $orphanEmployees = Employee::where(function ($q) {
+                $q->whereNull('nip')->orWhere('nip', '');
+            })->where(function ($q) {
+                $q->whereNull('jabatan')->orWhere('jabatan', '');
+            })->get();
+
+            foreach ($orphanEmployees as $orphan) {
+                $orphanGender = strtoupper(trim($orphan->jenis_kelamin ?? ''));
+                $orphanIsMale = str_contains($orphanGender, 'LAKI') || $orphanGender === '1' || $orphanGender === 'L';
+
+                if ($orphanIsMale) {
+                    // Find female employee right after this orphan
+                    $targetFemale = Employee::where('id', '>', $orphan->id)
+                        ->where(function ($q) {
+                            $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                              ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                              ->orWhere('jenis_kelamin', '2')
+                              ->orWhere('jenis_kelamin', 'P');
+                        })
+                        ->where(function ($q) {
+                            $q->whereNotNull('nip')->where('nip', '!=', '');
+                        })
+                        ->orderBy('id', 'asc')
+                        ->first();
+
+                    if ($targetFemale) {
+                        EmployeeFamily::create([
+                            'employee_id'             => $targetFemale->id,
+                            'nama_lengkap'            => $orphan->nama_lengkap,
+                            'hubungan'                => 'SUAMI',
+                            'pisat'                   => '2',
+                            'nik'                     => $orphan->nik,
+                            'tempat_lahir'            => $orphan->tempat_lahir,
+                            'tanggal_lahir'           => $orphan->tanggal_lahir,
+                            'usia'                    => $orphan->usia,
+                            'jenis_kelamin'           => $orphan->jenis_kelamin ?: 'LAKI-LAKI',
+                            'status_kawin'            => $orphan->status_kawin ?: 'KAWIN',
+                            'nomor_bpjs_kis'          => $orphan->nomor_bpjs_kis_anggota_keluarga ?: $orphan->nomor_bpjs_kis_peserta,
+                            'kode_faskes_tk_1'        => $orphan->kode_faskes_tk_1,
+                            'nama_faskes_tk_1'        => $orphan->nama_faskes_tk_1,
+                            'kode_faskes_dokter_gigi' => $orphan->kode_faskes_dokter_gigi,
+                            'nama_faskes_dokter_gigi' => $orphan->nama_faskes_dokter_gigi,
+                            'alamat'                  => $orphan->alamat ?: $targetFemale->alamat,
+                        ]);
+
+                        $fixedCount++;
+                        $details[] = "Data '{$orphan->nama_lengkap}' (tercatat sebagai karyawan tanpa NIP) dikonversi menjadi Suami dari '{$targetFemale->nama_lengkap}'";
+                        $orphan->delete();
+                    }
+                }
+            }
+
+            DB::commit();
+
+            return response()->json([
+                'success'     => true,
+                'message'     => $fixedCount > 0
+                    ? "Berhasil memperbaiki {$fixedCount} relasi kepala keluarga / suami!"
+                    : "Semua relasi kepala keluarga dan anggota keluarga sudah sesuai.",
+                'fixed_count' => $fixedCount,
+                'details'     => $details,
+            ]);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'success' => false,
+                'message' => 'Gagal memperbaiki relasi keluarga: ' . $e->getMessage(),
+            ], 500);
+        }
     }
 
     // ============================
