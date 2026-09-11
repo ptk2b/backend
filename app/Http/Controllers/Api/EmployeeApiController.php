@@ -23,10 +23,65 @@ class EmployeeApiController extends Controller
     // ============================
 
     /**
+     * Auto normalize all PKWT contracts in database to ensure minimal 6-month duration.
+     * Fixes any historical dates that prematurely flattened to today/expired date.
+     */
+    public function autoNormalizePkwtContracts(): void
+    {
+        try {
+            DB::statement("
+                UPDATE employees 
+                SET outtoday = DATE_SUB(DATE_ADD(`in`, INTERVAL 6 MONTH), INTERVAL 1 DAY)
+                WHERE status_hubungan_kerja = 'PKWT' 
+                  AND `in` IS NOT NULL 
+                  AND outtoday IS NOT NULL
+                  AND outtoday < DATE_SUB(DATE_ADD(`in`, INTERVAL 6 MONTH), INTERVAL 1 DAY)
+            ");
+
+            DB::statement("
+                UPDATE contract_histories ch
+                JOIN employees e ON e.id = ch.employee_id
+                SET ch.tanggal_selesai = DATE_SUB(DATE_ADD(ch.tanggal_mulai, INTERVAL 6 MONTH), INTERVAL 1 DAY),
+                    ch.masa_kontrak_bulan = 6
+                WHERE e.status_hubungan_kerja = 'PKWT'
+                  AND ch.tanggal_mulai IS NOT NULL
+                  AND ch.tanggal_selesai IS NOT NULL
+                  AND ch.tanggal_selesai < DATE_SUB(DATE_ADD(ch.tanggal_mulai, INTERVAL 6 MONTH), INTERVAL 1 DAY)
+            ");
+        } catch (\Exception $e) {
+            try {
+                Employee::where('status_hubungan_kerja', 'PKWT')
+                    ->whereNotNull('in')
+                    ->whereNotNull('outtoday')
+                    ->chunkById(100, function ($employees) {
+                        foreach ($employees as $emp) {
+                            try {
+                                $inDate = Carbon::parse($emp->in);
+                                $minEnd = $inDate->copy()->addMonths(6)->subDay();
+                                if (Carbon::parse($emp->outtoday)->lt($minEnd)) {
+                                    $emp->update(['outtoday' => $minEnd->format('Y-m-d')]);
+                                }
+                            } catch (\Exception $ex) {}
+                        }
+                    });
+            } catch (\Exception $ex) {
+                Log::warning('autoNormalizePkwtContracts error: ' . $ex->getMessage());
+            }
+        }
+    }
+
+    public function normalizePkwt(): JsonResponse
+    {
+        $this->autoNormalizePkwtContracts();
+        return response()->json(['message' => 'Semua kontrak PKWT berhasil dinormalisasi otomatis ke minimal 6 bulan.']);
+    }
+
+    /**
      * List all employees with search + multi filters + families count.
      */
     public function index(Request $request): JsonResponse
     {
+        $this->autoNormalizePkwtContracts();
         $query = Employee::withCount('families')->with(['families', 'contractHistories']);
 
         // Search by nama_lengkap, nip, nik, jabatan, departemen, email, no_telp
@@ -214,6 +269,7 @@ class EmployeeApiController extends Controller
      */
     public function stats(): JsonResponse
     {
+        $this->autoNormalizePkwtContracts();
         $total = Employee::count();
         $active = Employee::where('status_karyawan', 'ACTIVE')->count();
         $nonActive = Employee::where('status_karyawan', 'NON ACTIVE')->count();
@@ -333,6 +389,15 @@ class EmployeeApiController extends Controller
     public function show($id): JsonResponse
     {
         $employee = Employee::with(['contractHistories', 'families'])->findOrFail($id);
+        if (strtoupper($employee->status_hubungan_kerja ?? '') === 'PKWT' && !empty($employee->in)) {
+            try {
+                $minEnd = Carbon::parse($employee->in)->addMonths(6)->subDay();
+                if (empty($employee->outtoday) || Carbon::parse($employee->outtoday)->lt($minEnd)) {
+                    $employee->outtoday = $minEnd->format('Y-m-d');
+                    $employee->save();
+                }
+            } catch (\Exception $e) {}
+        }
         return response()->json($employee);
     }
 
@@ -419,10 +484,13 @@ class EmployeeApiController extends Controller
 
         $data = $validator->validated();
 
-        // Default PKWT contract end date to at least 6 months if outtoday is missing
-        if (($data['status_hubungan_kerja'] ?? '') === 'PKWT' && !empty($data['in']) && empty($data['outtoday'])) {
+        // Enforce PKWT contract end date to at least 6 months if missing or less than 6 months
+        if (($data['status_hubungan_kerja'] ?? '') === 'PKWT' && !empty($data['in'])) {
             try {
-                $data['outtoday'] = Carbon::parse($data['in'])->addMonths(6)->subDay()->format('Y-m-d');
+                $minEnd = Carbon::parse($data['in'])->addMonths(6)->subDay();
+                if (empty($data['outtoday']) || Carbon::parse($data['outtoday'])->lt($minEnd)) {
+                    $data['outtoday'] = $minEnd->format('Y-m-d');
+                }
             } catch (\Exception $e) {}
         }
 
@@ -595,9 +663,12 @@ class EmployeeApiController extends Controller
 
         $statusHub = $data['status_hubungan_kerja'] ?? $employee->status_hubungan_kerja;
         $inVal = $data['in'] ?? $employee->in;
-        if ($statusHub === 'PKWT' && !empty($inVal) && empty($data['outtoday'])) {
+        if ($statusHub === 'PKWT' && !empty($inVal)) {
             try {
-                $data['outtoday'] = Carbon::parse($inVal)->addMonths(6)->subDay()->format('Y-m-d');
+                $minEnd = Carbon::parse($inVal)->addMonths(6)->subDay();
+                if (empty($data['outtoday']) || Carbon::parse($data['outtoday'])->lt($minEnd)) {
+                    $data['outtoday'] = $minEnd->format('Y-m-d');
+                }
             } catch (\Exception $e) {}
         }
 
@@ -752,6 +823,7 @@ class EmployeeApiController extends Controller
 
     public function expiring(Request $request): JsonResponse
     {
+        $this->autoNormalizePkwtContracts();
         $days = $request->input('days', 30);
         $employees = Employee::expiringSoon($days)->orderBy('outtoday', 'asc')->get();
 
