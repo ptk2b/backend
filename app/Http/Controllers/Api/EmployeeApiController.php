@@ -892,92 +892,178 @@ class EmployeeApiController extends Controller
 
             if ($isEmp) {
                 $employeeRows[$index] = [
-                    'nip'    => $nip,
-                    'nama'   => $nama,
-                    'noKk'   => trim($row['nomor_kartu_keluarga'] ?? ''),
-                    'gender' => strtoupper(trim($row['jenis_kelamin'] ?? '')),
-                    'alamat' => trim($row['alamat'] ?? ''),
+                    'nip'          => $nip,
+                    'nama'         => $nama,
+                    'noKk'         => trim($row['nomor_kartu_keluarga'] ?? ''),
+                    'gender'       => strtoupper(trim($row['jenis_kelamin'] ?? '')),
+                    'status_kawin' => strtoupper(trim($row['status_kawin'] ?? '')),
+                    'alamat'       => trim($row['alamat'] ?? ''),
                 ];
             }
         }
+
+        // Helper: Extract distinctive non-generic name tokens (length >= 4)
+        $getDistinctiveTokens = function ($name) {
+            $generic = [
+                'MOHAMAD', 'MOHAMMAD', 'MUHAMMAD', 'MUHAMAD', 'ACHMAD', 'AHMAD',
+                'ABDUL', 'SITI', 'NUR', 'BIN', 'BINTI', 'PUTRA', 'PUTRI', 'DEWI'
+            ];
+            $words = preg_split('/[^A-Z0-9]+/', strtoupper($name ?? ''));
+            return array_values(array_filter($words, function ($w) use ($generic) {
+                return strlen($w) >= 4 && !in_array($w, $generic);
+            }));
+        };
 
         // If no employees were detected (e.g. template without NIP), treat first non-empty row as employee
         if (empty($employeeRows)) {
             foreach ($items as $index => $row) {
                 if (!empty($row['nama_lengkap'] ?? $row['nama'] ?? '')) {
                     $employeeRows[$index] = [
-                        'nip'    => trim($row['nip'] ?? ''),
-                        'nama'   => trim($row['nama_lengkap'] ?? $row['nama'] ?? ''),
-                        'noKk'   => trim($row['nomor_kartu_keluarga'] ?? ''),
-                        'gender' => strtoupper(trim($row['jenis_kelamin'] ?? '')),
-                        'alamat' => trim($row['alamat'] ?? ''),
+                        'nip'          => trim($row['nip'] ?? ''),
+                        'nama'         => trim($row['nama_lengkap'] ?? $row['nama'] ?? ''),
+                        'noKk'         => trim($row['nomor_kartu_keluarga'] ?? ''),
+                        'gender'       => strtoupper(trim($row['jenis_kelamin'] ?? '')),
+                        'status_kawin' => strtoupper(trim($row['status_kawin'] ?? '')),
+                        'alamat'       => trim($row['alamat'] ?? ''),
                     ];
                     break;
                 }
             }
         }
 
+        // Collect child rows associated with each employee block for patronymic cross-matching
+        $employeeChildren = [];
+        foreach ($employeeRows as $eIdx => $eInfo) {
+            $employeeChildren[$eIdx] = [];
+        }
+        $eIndices = array_keys($employeeRows);
+        foreach ($items as $cIdx => $cRow) {
+            if (isset($employeeRows[$cIdx])) continue;
+            $cPisat = strtoupper(trim($cRow['pisat'] ?? $cRow['pisat_bpjs'] ?? ''));
+            if ($cPisat === '4' || str_contains($cPisat, 'ANAK')) {
+                $cNama = trim($cRow['nama_lengkap'] ?? $cRow['nama'] ?? '');
+                if (!empty($cNama)) {
+                    $prev = array_filter($eIndices, fn($k) => $k < $cIdx);
+                    if (!empty($prev)) {
+                        $pIdx = max($prev);
+                        $employeeChildren[$pIdx][] = $cNama;
+                    }
+                }
+            }
+        }
+
         // -------------------------------------------------------------
         // STEP 2: DETERMINE PARENT EMPLOYEE FOR EACH FAMILY ROW
-        // (Smart Lookahead: Kepala Keluarga / Suami above Female Employee)
+        // (Smart Lookahead & Cross-Row Child Name/Address Matching)
         // -------------------------------------------------------------
         $familyParentIndexMap = []; // index => employee_row_index
         foreach ($items as $index => $row) {
             if (isset($employeeRows[$index])) continue;
 
-            $parentIdx = null;
+            $pisat = strtoupper(trim($row['pisat'] ?? $row['pisat_bpjs'] ?? ''));
+            $gender = strtoupper(trim($row['jenis_kelamin'] ?? ''));
+            $isHusband = in_array($pisat, ['2', 'SUAMI', '2. SUAMI', '2 = SUAMI']) || str_contains($pisat, 'SUAMI');
+            $isWife = in_array($pisat, ['3', 'ISTRI', '3. ISTRI', '3 = ISTRI']) || str_contains($pisat, 'ISTRI');
 
-            // A. By explicit parent_nip
+            // A. By explicit parent_nip (with gender sanity check for husbands)
             if (!empty($row['parent_nip'])) {
                 foreach ($employeeRows as $eIdx => $eInfo) {
                     if (!empty($eInfo['nip']) && strtolower($eInfo['nip']) === strtolower(trim($row['parent_nip']))) {
+                        $pGender = $eInfo['gender'];
+                        $pIsMale = str_contains($pGender, 'LAKI') || $pGender === '1' || $pGender === 'L';
+                        // Do NOT link a husband to a male employee
+                        if ($isHusband && $pIsMale) {
+                            continue;
+                        }
                         $parentIdx = $eIdx;
                         break;
                     }
                 }
             }
 
-            // B. By explicit parent_name
+            // B. By explicit parent_name (with gender sanity check for husbands)
             if ($parentIdx === null && !empty($row['parent_name'])) {
                 foreach ($employeeRows as $eIdx => $eInfo) {
                     if (!empty($eInfo['nama']) && strtolower($eInfo['nama']) === strtolower(trim($row['parent_name']))) {
+                        $pGender = $eInfo['gender'];
+                        $pIsMale = str_contains($pGender, 'LAKI') || $pGender === '1' || $pGender === 'L';
+                        if ($isHusband && $pIsMale) {
+                            continue;
+                        }
                         $parentIdx = $eIdx;
                         break;
                     }
                 }
             }
 
-            // C. By KK match
+            // C. By KK match (with strict gender compatibility check)
             $noKk = trim($row['nomor_kartu_keluarga'] ?? '');
             if ($parentIdx === null && !empty($noKk)) {
                 foreach ($employeeRows as $eIdx => $eInfo) {
                     if (!empty($eInfo['noKk']) && $eInfo['noKk'] === $noKk) {
+                        $pGender = $eInfo['gender'];
+                        $pIsMale = str_contains($pGender, 'LAKI') || $pGender === '1' || $pGender === 'L';
+                        $pIsFemale = str_contains($pGender, 'PEREMPUAN') || str_contains($pGender, 'WANITA') || $pGender === '2' || $pGender === 'P';
+                        if ($isHusband && $pIsMale) continue; // Husband cannot belong to male employee
+                        if ($isWife && $pIsFemale) continue;  // Wife cannot belong to female employee
                         $parentIdx = $eIdx;
                         break;
                     }
                 }
             }
 
-            // D. SMART LOOKAHEAD: Suami / Kepala Keluarga positioned ABOVE female employee
-            $pisat = strtoupper(trim($row['pisat'] ?? $row['pisat_bpjs'] ?? ''));
-            $gender = strtoupper(trim($row['jenis_kelamin'] ?? ''));
-            $isHusband = str_contains($pisat, '2') || str_contains($pisat, 'SUAMI') || str_contains($gender, 'LAKI') || $gender === '1';
+            // D. By Child Name/Patronymic Match (Matches displaced husbands like Mohamad Azhari with Niska's child Nabila Zahra Azhari)
+            if ($parentIdx === null && $isHusband) {
+                $hTokens = $getDistinctiveTokens(trim($row['nama_lengkap'] ?? $row['nama'] ?? ''));
+                if (!empty($hTokens)) {
+                    foreach ($employeeRows as $eIdx => $eInfo) {
+                        $isFemale = str_contains($eInfo['gender'], 'PEREMPUAN') || str_contains($eInfo['gender'], 'WANITA') || $eInfo['gender'] === '2' || $eInfo['gender'] === 'P';
+                        if ($isFemale && !empty($employeeChildren[$eIdx])) {
+                            foreach ($employeeChildren[$eIdx] as $childName) {
+                                $cTokens = $getDistinctiveTokens($childName);
+                                if (!empty(array_intersect($hTokens, $cTokens))) {
+                                    $parentIdx = $eIdx;
+                                    break 2;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
+            // E. SMART LOOKAHEAD: Suami / Kepala Keluarga positioned ABOVE female employee
             if ($parentIdx === null && $isHusband) {
                 foreach ($employeeRows as $eIdx => $eInfo) {
                     if ($eIdx > $index) {
                         $isFemale = str_contains($eInfo['gender'], 'PEREMPUAN') || str_contains($eInfo['gender'], 'WANITA') || $eInfo['gender'] === '2' || $eInfo['gender'] === 'P';
-                        if ($isFemale || (!empty($row['alamat']) && !empty($eInfo['alamat']) && $row['alamat'] === $eInfo['alamat'])) {
-                            $parentIdx = $eIdx;
-                            break;
+                        $statusKawin = strtoupper(trim($eInfo['status_kawin'] ?? ''));
+                        $isSingle = str_contains($statusKawin, 'BELUM') || str_contains($statusKawin, 'CERAI');
+                        // Only link if female is married/not single, and either immediate next row or same address
+                        if ($isFemale && !$isSingle) {
+                            if ($eIdx === $index + 1 || (!empty($row['alamat']) && !empty($eInfo['alamat']) && (str_contains($eInfo['alamat'], $row['alamat']) || str_contains($row['alamat'], $eInfo['alamat'])))) {
+                                $parentIdx = $eIdx;
+                                break;
+                            }
                         }
-                        // Only inspect immediate next employee block
                         break;
                     }
                 }
             }
 
-            // E. Fallback to nearest preceding employee
+            // F. By Address: married female employee without husband
+            if ($parentIdx === null && $isHusband && !empty($row['alamat'])) {
+                foreach ($employeeRows as $eIdx => $eInfo) {
+                    $isFemale = str_contains($eInfo['gender'], 'PEREMPUAN') || str_contains($eInfo['gender'], 'WANITA') || $eInfo['gender'] === '2' || $eInfo['gender'] === 'P';
+                    $statusKawin = strtoupper(trim($eInfo['status_kawin'] ?? ''));
+                    $isMarried = !str_contains($statusKawin, 'BELUM') && !str_contains($statusKawin, 'CERAI');
+                    if ($isFemale && $isMarried && !empty($eInfo['alamat']) && (str_contains($eInfo['alamat'], $row['alamat']) || str_contains($row['alamat'], $eInfo['alamat']))) {
+                        $parentIdx = $eIdx;
+                        break;
+                    }
+                }
+            }
+
+            // G. Fallback to nearest preceding employee
             if ($parentIdx === null) {
                 $prev = array_filter(array_keys($employeeRows), fn($k) => $k < $index);
                 if (!empty($prev)) {
@@ -1317,12 +1403,26 @@ class EmployeeApiController extends Controller
                   ->orWhere('pisat', 'like', '%SUAMI%');
             })->get();
 
+            // Distinctive tokens helper
+            $getDistinctiveTokens = function ($name) {
+                $generic = [
+                    'MOHAMAD', 'MOHAMMAD', 'MUHAMMAD', 'MUHAMAD', 'ACHMAD', 'AHMAD',
+                    'ABDUL', 'SITI', 'NUR', 'BIN', 'BINTI', 'PUTRA', 'PUTRI', 'DEWI'
+                ];
+                $words = preg_split('/[^A-Z0-9]+/', strtoupper($name ?? ''));
+                return array_values(array_filter($words, function ($w) use ($generic) {
+                    return strlen($w) >= 4 && !in_array($w, $generic);
+                }));
+            };
+
             foreach ($suamiFamilies as $fam) {
                 $parent = Employee::find($fam->employee_id);
                 if (!$parent) continue;
 
                 $parentGender = strtoupper(trim($parent->jenis_kelamin ?? ''));
                 $parentIsMale = str_contains($parentGender, 'LAKI') || $parentGender === '1' || $parentGender === 'L';
+                $parentStatusKawin = strtoupper(trim($parent->status_kawin ?? ''));
+                $parentIsSingle = str_contains($parentStatusKawin, 'BELUM') || str_contains($parentStatusKawin, 'CERAI');
 
                 // Check if parent has duplicate husbands
                 $hasMultipleSuamis = EmployeeFamily::where('employee_id', $parent->id)
@@ -1333,12 +1433,60 @@ class EmployeeApiController extends Controller
                           ->orWhere('pisat', 'like', '%SUAMI%');
                     })->exists();
 
-                // Anomaly: Parent is male, OR parent is female but already has another husband
-                if ($parentIsMale || $hasMultipleSuamis) {
-                    $targetFemale = null;
+                // Check if any married female employee has a registered child matching this husband's name token (e.g. AZHARI -> Nabila Zahra Azhari)
+                $betterFemaleByChild = null;
+                $hTokens = $getDistinctiveTokens($fam->nama_lengkap);
+                if (!empty($hTokens)) {
+                    $potentialMothers = Employee::where('id', '!=', $parent->id)
+                        ->where(function ($q) {
+                            $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                              ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                              ->orWhere('jenis_kelamin', '2')
+                              ->orWhere('jenis_kelamin', 'P');
+                        })
+                        ->whereDoesntHave('families', function ($q) {
+                            $q->where('hubungan', 'like', '%SUAMI%')
+                              ->orWhere('pisat', 'like', '%2%')
+                              ->orWhere('pisat', 'like', '%SUAMI%');
+                        })
+                        ->with('families')
+                        ->get();
 
-                    // A. Check if any female employee shares the same address
-                    if (!empty($fam->alamat)) {
+                    foreach ($potentialMothers as $potMother) {
+                        foreach ($potMother->families as $childFam) {
+                            $cTokens = $getDistinctiveTokens($childFam->nama_lengkap);
+                            if (!empty(array_intersect($hTokens, $cTokens))) {
+                                $betterFemaleByChild = $potMother;
+                                break 2;
+                            }
+                        }
+                    }
+                }
+
+                // Anomaly: Parent is male, OR has multiple husbands, OR parent is single/unmarried, OR husband's child belongs to another mother
+                if ($parentIsMale || $hasMultipleSuamis || $parentIsSingle || ($betterFemaleByChild !== null)) {
+                    $targetFemale = $betterFemaleByChild;
+
+                    // A. By KK match if not matched by child
+                    if (!$targetFemale && !empty($parent->nomor_kartu_keluarga)) {
+                        $targetFemale = Employee::where('id', '!=', $parent->id)
+                            ->where('nomor_kartu_keluarga', $parent->nomor_kartu_keluarga)
+                            ->where(function ($q) {
+                                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                                  ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                                  ->orWhere('jenis_kelamin', '2')
+                                  ->orWhere('jenis_kelamin', 'P');
+                            })
+                            ->whereDoesntHave('families', function ($q) {
+                                $q->where('hubungan', 'like', '%SUAMI%')
+                                  ->orWhere('pisat', 'like', '%2%')
+                                  ->orWhere('pisat', 'like', '%SUAMI%');
+                            })
+                            ->first();
+                    }
+
+                    // B. By same address (only match married female without husband)
+                    if (!$targetFemale && !empty($fam->alamat)) {
                         $targetFemale = Employee::where(function ($q) {
                                 $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
                                   ->orWhere('jenis_kelamin', 'like', '%WANITA%')
@@ -1346,11 +1494,42 @@ class EmployeeApiController extends Controller
                                   ->orWhere('jenis_kelamin', 'P');
                             })
                             ->where('id', '!=', $parent->id)
-                            ->where('alamat', $fam->alamat)
+                            ->where('alamat', 'like', '%' . trim($fam->alamat) . '%')
+                            ->where(function ($q) {
+                                $q->where('status_kawin', 'like', '%MENIKAH%')
+                                  ->orWhere('status_kawin', 'like', '%KAWIN%');
+                            })
+                            ->whereDoesntHave('families', function ($q) {
+                                $q->where('hubungan', 'like', '%SUAMI%')
+                                  ->orWhere('pisat', 'like', '%2%')
+                                  ->orWhere('pisat', 'like', '%SUAMI%');
+                            })
                             ->first();
                     }
 
-                    // B. Find the nearest female employee registered after this parent who doesn't have a husband yet
+                    // C. Fallback: nearest married female employee registered after parent without husband
+                    if (!$targetFemale) {
+                        $targetFemale = Employee::where('id', '>', $parent->id)
+                            ->where(function ($q) {
+                                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
+                                  ->orWhere('jenis_kelamin', 'like', '%WANITA%')
+                                  ->orWhere('jenis_kelamin', '2')
+                                  ->orWhere('jenis_kelamin', 'P');
+                            })
+                            ->where(function ($q) {
+                                $q->where('status_kawin', 'like', '%MENIKAH%')
+                                  ->orWhere('status_kawin', 'like', '%KAWIN%');
+                            })
+                            ->whereDoesntHave('families', function ($q) {
+                                $q->where('hubungan', 'like', '%SUAMI%')
+                                  ->orWhere('pisat', 'like', '%2%')
+                                  ->orWhere('pisat', 'like', '%SUAMI%');
+                            })
+                            ->orderBy('id', 'asc')
+                            ->first();
+                    }
+
+                    // D. Fallback: closest female employee after parent without husband
                     if (!$targetFemale) {
                         $targetFemale = Employee::where('id', '>', $parent->id)
                             ->where(function ($q) {
@@ -1363,19 +1542,6 @@ class EmployeeApiController extends Controller
                                 $q->where('hubungan', 'like', '%SUAMI%')
                                   ->orWhere('pisat', 'like', '%2%')
                                   ->orWhere('pisat', 'like', '%SUAMI%');
-                            })
-                            ->orderBy('id', 'asc')
-                            ->first();
-                    }
-
-                    // C. Fallback: closest female employee after parent
-                    if (!$targetFemale) {
-                        $targetFemale = Employee::where('id', '>', $parent->id)
-                            ->where(function ($q) {
-                                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
-                                  ->orWhere('jenis_kelamin', 'like', '%WANITA%')
-                                  ->orWhere('jenis_kelamin', '2')
-                                  ->orWhere('jenis_kelamin', 'P');
                             })
                             ->orderBy('id', 'asc')
                             ->first();
