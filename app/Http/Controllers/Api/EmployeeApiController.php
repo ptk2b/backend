@@ -1325,6 +1325,38 @@ class EmployeeApiController extends Controller
                     }
                 }
 
+                // VALIDASI KEPALA KELUARGA / ORANG TUA:
+                // Jika karyawan induk BELUM MENIKAH atau CERAI, tidak boleh memiliki SUAMI atau ISTRI!
+                // Kepala keluarga laki-laki di KK karyawan perempuan lajang adalah AYAH / ORANG TUA.
+                $parentStatus = strtoupper(trim($parentEmp->status_kawin ?? ''));
+                $parentIsSingle = str_contains($parentStatus, 'BELUM') || str_contains($parentStatus, 'CERAI');
+                $parentNamaAyah = strtoupper(trim($parentEmp->nama_ayah ?? ''));
+                $parentNamaIbu = strtoupper(trim($parentEmp->nama_ibu ?? ''));
+                $famNama = strtoupper($nama);
+
+                if ($parentIsSingle) {
+                    if ($hubungan === 'SUAMI') {
+                        $isAyahName = (!empty($parentNamaAyah) && strlen($parentNamaAyah) >= 3 && (str_contains($famNama, $parentNamaAyah) || str_contains($parentNamaAyah, $famNama)));
+                        $isAyahAge = ($usia !== null && $parentEmp->usia !== null && ($usia - $parentEmp->usia >= 15));
+                        $hubungan = ($isAyahName || $isAyahAge) ? 'AYAH' : 'ANGGOTA KELUARGA';
+                    } elseif ($hubungan === 'ISTRI') {
+                        $isIbuName = (!empty($parentNamaIbu) && strlen($parentNamaIbu) >= 3 && (str_contains($famNama, $parentNamaIbu) || str_contains($parentNamaIbu, $famNama)));
+                        $isIbuAge = ($usia !== null && $parentEmp->usia !== null && ($usia - $parentEmp->usia >= 15));
+                        $hubungan = ($isIbuName || $isIbuAge) ? 'IBU' : 'ANGGOTA KELUARGA';
+                    }
+                }
+
+                // Perlindungan gender yang sama
+                $parentGender = strtoupper(trim($parentEmp->jenis_kelamin ?? ''));
+                $parentIsMale = str_contains($parentGender, 'LAKI') || $parentGender === '1' || $parentGender === 'L';
+                $parentIsFemale = str_contains($parentGender, 'PEREMPUAN') || str_contains($parentGender, 'WANITA') || $parentGender === '2' || $parentGender === 'P';
+                if ($parentIsMale && $hubungan === 'SUAMI') {
+                    $hubungan = (!empty($parentNamaAyah) && strlen($parentNamaAyah) >= 3 && str_contains($famNama, $parentNamaAyah)) ? 'AYAH' : 'ANGGOTA KELUARGA';
+                }
+                if ($parentIsFemale && $hubungan === 'ISTRI') {
+                    $hubungan = (!empty($parentNamaIbu) && strlen($parentNamaIbu) >= 3 && str_contains($famNama, $parentNamaIbu)) ? 'IBU' : 'ANGGOTA KELUARGA';
+                }
+
                 $familyData = [
                     'employee_id'             => $parentEmp->id,
                     'nama_lengkap'            => $nama,
@@ -1423,6 +1455,22 @@ class EmployeeApiController extends Controller
                 $parentIsMale = str_contains($parentGender, 'LAKI') || $parentGender === '1' || $parentGender === 'L';
                 $parentStatusKawin = strtoupper(trim($parent->status_kawin ?? ''));
                 $parentIsSingle = str_contains($parentStatusKawin, 'BELUM') || str_contains($parentStatusKawin, 'CERAI');
+
+                // JIKA KARYAWAN BELUM MENIKAH / CERAI:
+                // Kepala keluarga laki-laki di KK-nya adalah AYAH / ORANG TUA / ANGGOTA KELUARGA, BUKAN SUAMI!
+                if ($parentIsSingle) {
+                    $famNamaUpper = strtoupper(trim($fam->nama_lengkap ?? ''));
+                    $parentNamaAyah = strtoupper(trim($parent->nama_ayah ?? ''));
+                    $isAyahName = (!empty($parentNamaAyah) && strlen($parentNamaAyah) >= 3 && (str_contains($famNamaUpper, $parentNamaAyah) || str_contains($parentNamaAyah, $famNamaUpper)));
+                    $isAyahAge = ($fam->usia !== null && $parent->usia !== null && ($fam->usia - $parent->usia >= 15));
+
+                    $fam->hubungan = ($isAyahName || $isAyahAge) ? 'AYAH' : 'ANGGOTA KELUARGA';
+                    $fam->save();
+
+                    $fixedCount++;
+                    $details[] = "Data '{$fam->nama_lengkap}' pada karyawan '{$parent->nama_lengkap}' ({$parentStatusKawin}) dikoreksi dari Suami menjadi '{$fam->hubungan}'";
+                    continue;
+                }
 
                 // Check if parent has duplicate husbands
                 $hasMultipleSuamis = EmployeeFamily::where('employee_id', $parent->id)
