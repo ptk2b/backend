@@ -1334,27 +1334,16 @@ class EmployeeApiController extends Controller
                 $parentNamaIbu = strtoupper(trim($parentEmp->nama_ibu ?? ''));
                 $famNama = strtoupper($nama);
 
-                if ($parentIsSingle) {
-                    if ($hubungan === 'SUAMI') {
-                        $isAyahName = (!empty($parentNamaAyah) && strlen($parentNamaAyah) >= 3 && (str_contains($famNama, $parentNamaAyah) || str_contains($parentNamaAyah, $famNama)));
-                        $isAyahAge = ($usia !== null && $parentEmp->usia !== null && ($usia - $parentEmp->usia >= 15));
-                        $hubungan = ($isAyahName || $isAyahAge) ? 'AYAH' : 'ANGGOTA KELUARGA';
-                    } elseif ($hubungan === 'ISTRI') {
-                        $isIbuName = (!empty($parentNamaIbu) && strlen($parentNamaIbu) >= 3 && (str_contains($famNama, $parentNamaIbu) || str_contains($parentNamaIbu, $famNama)));
-                        $isIbuAge = ($usia !== null && $parentEmp->usia !== null && ($usia - $parentEmp->usia >= 15));
-                        $hubungan = ($isIbuName || $isIbuAge) ? 'IBU' : 'ANGGOTA KELUARGA';
-                    }
+                // REGULASI BPJS KESEHATAN PERUSAHAAN (PPU):
+                // Orang Tua (Ayah/Ibu) dan Saudara (Kakak/Adik) BUKAN tanggungan pokok BPJS perusahaan.
+                // Jika karyawan induk BELUM MENIKAH atau CERAI, baris non-anak tidak dimasukkan ke daftar tanggungan BPJS!
+                if ($parentIsSingle && $hubungan !== 'ANAK') {
+                    $skipped++;
+                    continue;
                 }
-
-                // Perlindungan gender yang sama
-                $parentGender = strtoupper(trim($parentEmp->jenis_kelamin ?? ''));
-                $parentIsMale = str_contains($parentGender, 'LAKI') || $parentGender === '1' || $parentGender === 'L';
-                $parentIsFemale = str_contains($parentGender, 'PEREMPUAN') || str_contains($parentGender, 'WANITA') || $parentGender === '2' || $parentGender === 'P';
-                if ($parentIsMale && $hubungan === 'SUAMI') {
-                    $hubungan = (!empty($parentNamaAyah) && strlen($parentNamaAyah) >= 3 && str_contains($famNama, $parentNamaAyah)) ? 'AYAH' : 'ANGGOTA KELUARGA';
-                }
-                if ($parentIsFemale && $hubungan === 'ISTRI') {
-                    $hubungan = (!empty($parentNamaIbu) && strlen($parentNamaIbu) >= 3 && str_contains($famNama, $parentNamaIbu)) ? 'IBU' : 'ANGGOTA KELUARGA';
+                if (in_array($hubungan, ['AYAH', 'IBU', 'ORANG TUA', 'ANGGOTA KELUARGA', 'LAINNYA'])) {
+                    $skipped++;
+                    continue;
                 }
 
                 $familyData = [
@@ -1457,18 +1446,11 @@ class EmployeeApiController extends Controller
                 $parentIsSingle = str_contains($parentStatusKawin, 'BELUM') || str_contains($parentStatusKawin, 'CERAI');
 
                 // JIKA KARYAWAN BELUM MENIKAH / CERAI:
-                // Kepala keluarga laki-laki di KK-nya adalah AYAH / ORANG TUA / ANGGOTA KELUARGA, BUKAN SUAMI!
+                // Kepala keluarga laki-laki di KK-nya adalah Ayah/Saudara, BUKAN tanggungan BPJS perusahaan!
                 if ($parentIsSingle) {
-                    $famNamaUpper = strtoupper(trim($fam->nama_lengkap ?? ''));
-                    $parentNamaAyah = strtoupper(trim($parent->nama_ayah ?? ''));
-                    $isAyahName = (!empty($parentNamaAyah) && strlen($parentNamaAyah) >= 3 && (str_contains($famNamaUpper, $parentNamaAyah) || str_contains($parentNamaAyah, $famNamaUpper)));
-                    $isAyahAge = ($fam->usia !== null && $parent->usia !== null && ($fam->usia - $parent->usia >= 15));
-
-                    $fam->hubungan = ($isAyahName || $isAyahAge) ? 'AYAH' : 'ANGGOTA KELUARGA';
-                    $fam->save();
-
+                    $fam->delete();
                     $fixedCount++;
-                    $details[] = "Data '{$fam->nama_lengkap}' pada karyawan '{$parent->nama_lengkap}' ({$parentStatusKawin}) dikoreksi dari Suami menjadi '{$fam->hubungan}'";
+                    $details[] = "Data '{$fam->nama_lengkap}' pada karyawan belum menikah '{$parent->nama_lengkap}' ({$parentStatusKawin}) dihapus dari tanggungan BPJS (karena orang tua/saudara bukan tanggungan BPJS perusahaan).";
                     continue;
                 }
 
@@ -1606,7 +1588,16 @@ class EmployeeApiController extends Controller
                 }
             }
 
-            // 2. Check orphan employees (heads of household accidentally created as Employee without NIP and Jabatan)
+            // 2. Check and clean any non-BPJS relations (AYAH, IBU, ORANG TUA, ANGGOTA KELUARGA, LAINNYA)
+            $nonBpjsFamilies = EmployeeFamily::whereIn('hubungan', ['AYAH', 'IBU', 'ORANG TUA', 'ANGGOTA KELUARGA', 'LAINNYA'])->get();
+            foreach ($nonBpjsFamilies as $nonBpjs) {
+                $parentName = $nonBpjs->employee ? $nonBpjs->employee->nama_lengkap : 'ID ' . $nonBpjs->employee_id;
+                $details[] = "Data '{$nonBpjs->nama_lengkap}' ({$nonBpjs->hubungan}) pada karyawan '{$parentName}' dihapus dari tanggungan BPJS.";
+                $nonBpjs->delete();
+                $fixedCount++;
+            }
+
+            // 3. Check orphan employees (heads of household accidentally created as Employee without NIP and Jabatan)
             $orphanEmployees = Employee::where(function ($q) {
                 $q->whereNull('nip')->orWhere('nip', '');
             })->where(function ($q) {
