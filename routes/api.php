@@ -92,6 +92,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::delete('/admin/applications/{id}', [CareerApiController::class, 'destroyApplication']);
 
     // Man Power / Employees (hidden page)
+    Route::get('/admin/employees/bootstrap', [EmployeeApiController::class, 'bootstrap']);
     Route::get('/admin/employees/stats', [EmployeeApiController::class, 'stats']);
     Route::get('/admin/employees/expiring', [EmployeeApiController::class, 'expiring']);
     Route::get('/admin/employees/expiring-contracts', [EmployeeApiController::class, 'expiring']);

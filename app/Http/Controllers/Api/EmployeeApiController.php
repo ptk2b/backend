@@ -81,8 +81,11 @@ class EmployeeApiController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $this->autoNormalizePkwtContracts();
-        $query = Employee::withCount('families')->with(['families', 'contractHistories']);
+        $query = Employee::withCount('families');
+
+        if ($request->boolean('with_relations')) {
+            $query->with(['families', 'contractHistories']);
+        }
 
         // Search by nama_lengkap, nip, nik, jabatan, departemen, email, no_telp
         if ($search = $request->input('search')) {
@@ -159,9 +162,19 @@ class EmployeeApiController extends Controller
             $this->applyEducationFilter($query, $edu);
         }
 
-        $employees = $query->orderBy('nama_lengkap', 'asc')->get();
+        if ($request->boolean('all') || $request->input('per_page') === 'all' || (string) $request->input('per_page') === '0') {
+            $employees = $query->orderBy('nama_lengkap', 'asc')->get();
+            return response()->json($employees);
+        }
 
-        return response()->json($employees);
+        $perPage = (int) $request->input('per_page', 50);
+        if ($perPage <= 0 || $perPage > 200) {
+            $perPage = 50;
+        }
+
+        $paginated = $query->orderBy('nama_lengkap', 'asc')->paginate($perPage);
+
+        return response()->json($paginated);
     }
 
     /**
@@ -269,94 +282,49 @@ class EmployeeApiController extends Controller
      */
     public function stats(): JsonResponse
     {
-        $this->autoNormalizePkwtContracts();
-        $total = Employee::count();
-        $active = Employee::where('status_karyawan', 'ACTIVE')->count();
-        $nonActive = Employee::where('status_karyawan', 'NON ACTIVE')->count();
-        $pkwt = Employee::where('status_karyawan', 'ACTIVE')->where('status_hubungan_kerja', 'PKWT')->count();
-        $pkwtt = Employee::where('status_karyawan', 'ACTIVE')->where('status_hubungan_kerja', 'PKWTT')->count();
-        $skpkt = Employee::where('status_karyawan', 'ACTIVE')->where('status_hubungan_kerja', 'SKPKT')->count();
-
-        $lokal = Employee::where('status_karyawan', 'ACTIVE')
-            ->where(function ($q) {
-                $q->where('lokal_nonlokal', 'like', '%LOKAL%')
-                  ->where('lokal_nonlokal', 'not like', '%NON%');
-            })->count();
-
-        $nonLokal = Employee::where('status_karyawan', 'ACTIVE')
-            ->where(function ($q) {
-                $q->where('lokal_nonlokal', 'like', '%NON%');
-            })->count();
-
-        $lakiLaki = Employee::where('status_karyawan', 'ACTIVE')
-            ->where(function ($q) {
-                $q->where('jenis_kelamin', 'like', '%LAKI%')
-                  ->orWhere('jenis_kelamin', '1')
-                  ->orWhere('jenis_kelamin', 'L');
-            })->count();
-
-        $perempuan = Employee::where('status_karyawan', 'ACTIVE')
-            ->where(function ($q) {
-                $q->where('jenis_kelamin', 'like', '%PEREMPUAN%')
-                  ->orWhere('jenis_kelamin', '2')
-                  ->orWhere('jenis_kelamin', 'P');
-            })->count();
-
-        $pendidikanKosong = Employee::where('status_karyawan', 'ACTIVE')
-            ->where(function ($q) {
-                $q->whereNull('pendidikan_terakhir')
-                  ->orWhere('pendidikan_terakhir', '')
-                  ->orWhere('pendidikan_terakhir', '-');
-            })->count();
-
-        // Counts for each simplified education tier (Active Employees)
-        $qSd = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qSd, 'SD');
-        $eduSd = $qSd->count();
-
-        $qSmp = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qSmp, 'SMP');
-        $eduSmp = $qSmp->count();
-
-        $qSma = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qSma, 'SMA/SMK');
-        $eduSma = $qSma->count();
-
-        $qD3 = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qD3, 'D3');
-        $eduD3 = $qD3->count();
-
-        $qS1 = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qS1, 'S1');
-        $eduS1 = $qS1->count();
-
-        $qS2 = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qS2, 'S2');
-        $eduS2 = $qS2->count();
-
-        $qS3 = Employee::where('status_karyawan', 'ACTIVE');
-        $this->applyEducationFilter($qS3, 'S3');
-        $eduS3 = $qS3->count();
+        // Single efficient query using conditional aggregation instead of 15+ separate queries
+        $row = DB::selectOne("
+            SELECT
+                COUNT(*) AS total,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' THEN 1 ELSE 0 END) AS active,
+                SUM(CASE WHEN status_karyawan = 'NON ACTIVE' THEN 1 ELSE 0 END) AS non_active,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'PKWT' THEN 1 ELSE 0 END) AS pkwt,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'PKWTT' THEN 1 ELSE 0 END) AS pkwtt,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'SKPKT' THEN 1 ELSE 0 END) AS skpkt,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND lokal_nonlokal LIKE '%LOKAL%' AND lokal_nonlokal NOT LIKE '%NON%' THEN 1 ELSE 0 END) AS lokal,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND lokal_nonlokal LIKE '%NON%' THEN 1 ELSE 0 END) AS non_lokal,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (jenis_kelamin LIKE '%LAKI%' OR jenis_kelamin = '1' OR jenis_kelamin = 'L') THEN 1 ELSE 0 END) AS laki_laki,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (jenis_kelamin LIKE '%PEREMPUAN%' OR jenis_kelamin = '2' OR jenis_kelamin = 'P') THEN 1 ELSE 0 END) AS perempuan,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir IS NULL OR pendidikan_terakhir = '' OR pendidikan_terakhir = '-') THEN 1 ELSE 0 END) AS pendidikan_kosong,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SD%' OR pendidikan_terakhir LIKE '%SEKOLAH DASAR%' OR pendidikan_terakhir LIKE '%PAKET A%' OR pendidikan_terakhir LIKE '%IBTIDAIYAH%') THEN 1 ELSE 0 END) AS edu_sd,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SMP%' OR pendidikan_terakhir LIKE '%SLTP%' OR pendidikan_terakhir LIKE '%MTS%' OR pendidikan_terakhir LIKE '%PAKET B%' OR pendidikan_terakhir LIKE '%TSANAWIYAH%') THEN 1 ELSE 0 END) AS edu_smp,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SMA%' OR pendidikan_terakhir LIKE '%SMK%' OR pendidikan_terakhir LIKE '%SLTA%' OR pendidikan_terakhir LIKE '%STM%' OR pendidikan_terakhir LIKE '%SMEA%' OR pendidikan_terakhir LIKE '%SMU%' OR pendidikan_terakhir LIKE '%PAKET C%' OR pendidikan_terakhir LIKE '%ALIYAH%' OR pendidikan_terakhir LIKE '%KEJURUAN%') THEN 1 ELSE 0 END) AS edu_sma,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%D3%' OR pendidikan_terakhir LIKE '%D-3%' OR pendidikan_terakhir LIKE '%DIPLOMA III%' OR pendidikan_terakhir LIKE '%DIPLOMA 3%' OR pendidikan_terakhir LIKE '%AKADEMI%' OR pendidikan_terakhir LIKE '%SARJANA MUDA%' OR pendidikan_terakhir LIKE '%A.MD%') THEN 1 ELSE 0 END) AS edu_d3,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S1%' OR pendidikan_terakhir LIKE '%S-1%' OR pendidikan_terakhir LIKE '%STRATA I%' OR pendidikan_terakhir LIKE '%STRATA 1%' OR pendidikan_terakhir LIKE '%SARJANA%' OR pendidikan_terakhir LIKE '%D4%' OR pendidikan_terakhir LIKE '%DIPLOMA IV%') AND pendidikan_terakhir NOT LIKE '%SARJANA MUDA%' THEN 1 ELSE 0 END) AS edu_s1,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S2%' OR pendidikan_terakhir LIKE '%S-2%' OR pendidikan_terakhir LIKE '%STRATA II%' OR pendidikan_terakhir LIKE '%STRATA 2%' OR pendidikan_terakhir LIKE '%MAGISTER%' OR pendidikan_terakhir LIKE '%MASTER%') THEN 1 ELSE 0 END) AS edu_s2,
+                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S3%' OR pendidikan_terakhir LIKE '%S-3%' OR pendidikan_terakhir LIKE '%STRATA III%' OR pendidikan_terakhir LIKE '%STRATA 3%' OR pendidikan_terakhir LIKE '%DOKTOR%' OR pendidikan_terakhir LIKE '%DOCTOR%') THEN 1 ELSE 0 END) AS edu_s3
+            FROM employees
+        ");
 
         return response()->json([
-            'total'             => $total,
-            'active'            => $active,
-            'non_active'        => $nonActive,
-            'pkwt'              => $pkwt,
-            'pkwtt'             => $pkwtt,
-            'skpkt'             => $skpkt,
-            'lokal'             => $lokal,
-            'non_lokal'         => $nonLokal,
-            'laki_laki'         => $lakiLaki,
-            'perempuan'         => $perempuan,
-            'pendidikan_kosong' => $pendidikanKosong,
-            'edu_sd'            => $eduSd,
-            'edu_smp'           => $eduSmp,
-            'edu_sma'           => $eduSma,
-            'edu_d3'            => $eduD3,
-            'edu_s1'            => $eduS1,
-            'edu_s2'            => $eduS2,
-            'edu_s3'            => $eduS3,
+            'total'             => (int) $row->total,
+            'active'            => (int) $row->active,
+            'non_active'        => (int) $row->non_active,
+            'pkwt'              => (int) $row->pkwt,
+            'pkwtt'             => (int) $row->pkwtt,
+            'skpkt'             => (int) $row->skpkt,
+            'lokal'             => (int) $row->lokal,
+            'non_lokal'         => (int) $row->non_lokal,
+            'laki_laki'         => (int) $row->laki_laki,
+            'perempuan'         => (int) $row->perempuan,
+            'pendidikan_kosong' => (int) $row->pendidikan_kosong,
+            'edu_sd'            => (int) $row->edu_sd,
+            'edu_smp'           => (int) $row->edu_smp,
+            'edu_sma'           => (int) $row->edu_sma,
+            'edu_d3'            => (int) $row->edu_d3,
+            'edu_s1'            => (int) $row->edu_s1,
+            'edu_s2'            => (int) $row->edu_s2,
+            'edu_s3'            => (int) $row->edu_s3,
         ]);
     }
 
@@ -381,6 +349,38 @@ class EmployeeApiController extends Controller
             ->values();
 
         return response()->json($positions);
+    }
+
+    /**
+     * Bootstrap endpoint: combine stats + departments + positions + educations in 1 call.
+     * Reduces 4 separate API requests to 1 on page load.
+     */
+    public function bootstrap(): JsonResponse
+    {
+        // Stats (1 query)
+        $statsResponse = $this->stats();
+        $stats = json_decode($statsResponse->getContent(), true);
+
+        // Departments
+        $departments = Department::orderBy('name')->get();
+
+        // Positions
+        $positions = Employee::whereNotNull('jabatan')
+            ->where('jabatan', '!=', '')
+            ->distinct()
+            ->pluck('jabatan')
+            ->sort()
+            ->values();
+
+        // Educations (static)
+        $educations = ['SD', 'SMP', 'SMA/SMK', 'D3', 'S1', 'S2', 'S3'];
+
+        return response()->json([
+            'stats'       => $stats,
+            'departments' => $departments,
+            'positions'   => $positions,
+            'educations'  => $educations,
+        ]);
     }
 
     /**

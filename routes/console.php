@@ -22,3 +22,12 @@ Artisan::command('employees:repair-families', function () {
     }
 })->purpose('Perbaiki relasi kepala keluarga / suami yang terbaca di atas karyawan sebelumnya tanpa perlu upload ulang');
 
+Artisan::command('employees:normalize-pkwt', function () {
+    $this->info("Menormalisasi kontrak PKWT ke minimal 6 bulan...");
+
+    $controller = app(\App\Http\Controllers\Api\EmployeeApiController::class);
+    $controller->autoNormalizePkwtContracts();
+
+    $this->info("Selesai.");
+})->purpose('Normalisasi semua kontrak PKWT ke minimal 6 bulan (jalankan via scheduler)');
+
