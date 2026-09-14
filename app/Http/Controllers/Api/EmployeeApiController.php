@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
 
 class EmployeeApiController extends Controller
@@ -68,6 +69,7 @@ class EmployeeApiController extends Controller
                 Log::warning('autoNormalizePkwtContracts error: ' . $ex->getMessage());
             }
         }
+        self::flushManpowerCache();
     }
 
     public function normalizePkwt(): JsonResponse
@@ -162,8 +164,43 @@ class EmployeeApiController extends Controller
             $this->applyEducationFilter($query, $edu);
         }
 
+        // Filter by masa_kerja (calculated between `in` and `outtoday` or CURDATE())
+        if ($mk = $request->input('filter_masa_kerja')) {
+            $dateExpr = "TIMESTAMPDIFF(MONTH, `in`, IF(status_karyawan = 'NON ACTIVE' AND outtoday IS NOT NULL, outtoday, CURDATE()))";
+            if ($mk === '<1' || $mk === '< 1 Tahun') {
+                $query->whereNotNull('in')->whereRaw("{$dateExpr} < 12");
+            } elseif ($mk === '1-3' || $mk === '1 - 3 Tahun') {
+                $query->whereNotNull('in')->whereRaw("{$dateExpr} >= 12 AND {$dateExpr} < 36");
+            } elseif ($mk === '3-5' || $mk === '3 - 5 Tahun') {
+                $query->whereNotNull('in')->whereRaw("{$dateExpr} >= 36 AND {$dateExpr} < 60");
+            } elseif ($mk === '5-10') {
+                $query->whereNotNull('in')->whereRaw("{$dateExpr} >= 60 AND {$dateExpr} < 120");
+            } elseif ($mk === '>10' || $mk === '> 5 Tahun') {
+                $query->whereNotNull('in')->whereRaw("{$dateExpr} >= 120");
+            }
+        }
+
+        // Dynamic Sorting
+        $sortBy = $request->input('sort_by', 'nama_lengkap');
+        $sortDir = strtolower($request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
+        $allowedSorts = [
+            'nama_lengkap'          => 'nama_lengkap',
+            'nip'                   => 'nip',
+            'nik'                   => 'nik',
+            'jabatan'               => 'jabatan',
+            'departemen'            => 'departemen',
+            'usia'                  => 'usia',
+            'in'                    => 'in',
+            'outtoday'              => 'outtoday',
+            'status_karyawan'       => 'status_karyawan',
+            'status_hubungan_kerja' => 'status_hubungan_kerja',
+            'created_at'            => 'created_at',
+        ];
+        $sortColumn = $allowedSorts[$sortBy] ?? 'nama_lengkap';
+        $query->orderBy($sortColumn, $sortDir);
+
         if ($request->boolean('all') || $request->input('per_page') === 'all' || (string) $request->input('per_page') === '0') {
-            $employees = $query->orderBy('nama_lengkap', 'asc')->get();
+            $employees = $query->get();
             return response()->json($employees);
         }
 
@@ -172,7 +209,7 @@ class EmployeeApiController extends Controller
             $perPage = 50;
         }
 
-        $paginated = $query->orderBy('nama_lengkap', 'asc')->paginate($perPage);
+        $paginated = $query->paginate($perPage);
 
         return response()->json($paginated);
     }
@@ -278,54 +315,72 @@ class EmployeeApiController extends Controller
     }
 
     /**
-     * Get global employee statistics for stat cards.
+     * Flush all manpower cached data (stats, bootstrap, positions).
+     */
+    public static function flushManpowerCache(): void
+    {
+        try {
+            Cache::forget('manpower_bootstrap');
+            Cache::forget('manpower_stats');
+            Cache::forget('manpower_positions');
+        } catch (\Exception $e) {
+            Log::warning('Failed to flush manpower cache: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Get global employee statistics for stat cards with 5-minute cache.
      */
     public function stats(): JsonResponse
     {
-        // Single efficient query using conditional aggregation instead of 15+ separate queries
-        $row = DB::selectOne("
-            SELECT
-                COUNT(*) AS total,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' THEN 1 ELSE 0 END) AS active,
-                SUM(CASE WHEN status_karyawan = 'NON ACTIVE' THEN 1 ELSE 0 END) AS non_active,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'PKWT' THEN 1 ELSE 0 END) AS pkwt,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'PKWTT' THEN 1 ELSE 0 END) AS pkwtt,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'SKPKT' THEN 1 ELSE 0 END) AS skpkt,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND lokal_nonlokal LIKE '%LOKAL%' AND lokal_nonlokal NOT LIKE '%NON%' THEN 1 ELSE 0 END) AS lokal,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND lokal_nonlokal LIKE '%NON%' THEN 1 ELSE 0 END) AS non_lokal,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (jenis_kelamin LIKE '%LAKI%' OR jenis_kelamin = '1' OR jenis_kelamin = 'L') THEN 1 ELSE 0 END) AS laki_laki,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (jenis_kelamin LIKE '%PEREMPUAN%' OR jenis_kelamin = '2' OR jenis_kelamin = 'P') THEN 1 ELSE 0 END) AS perempuan,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir IS NULL OR pendidikan_terakhir = '' OR pendidikan_terakhir = '-') THEN 1 ELSE 0 END) AS pendidikan_kosong,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SD%' OR pendidikan_terakhir LIKE '%SEKOLAH DASAR%' OR pendidikan_terakhir LIKE '%PAKET A%' OR pendidikan_terakhir LIKE '%IBTIDAIYAH%') THEN 1 ELSE 0 END) AS edu_sd,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SMP%' OR pendidikan_terakhir LIKE '%SLTP%' OR pendidikan_terakhir LIKE '%MTS%' OR pendidikan_terakhir LIKE '%PAKET B%' OR pendidikan_terakhir LIKE '%TSANAWIYAH%') THEN 1 ELSE 0 END) AS edu_smp,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SMA%' OR pendidikan_terakhir LIKE '%SMK%' OR pendidikan_terakhir LIKE '%SLTA%' OR pendidikan_terakhir LIKE '%STM%' OR pendidikan_terakhir LIKE '%SMEA%' OR pendidikan_terakhir LIKE '%SMU%' OR pendidikan_terakhir LIKE '%PAKET C%' OR pendidikan_terakhir LIKE '%ALIYAH%' OR pendidikan_terakhir LIKE '%KEJURUAN%') THEN 1 ELSE 0 END) AS edu_sma,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%D3%' OR pendidikan_terakhir LIKE '%D-3%' OR pendidikan_terakhir LIKE '%DIPLOMA III%' OR pendidikan_terakhir LIKE '%DIPLOMA 3%' OR pendidikan_terakhir LIKE '%AKADEMI%' OR pendidikan_terakhir LIKE '%SARJANA MUDA%' OR pendidikan_terakhir LIKE '%A.MD%') THEN 1 ELSE 0 END) AS edu_d3,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S1%' OR pendidikan_terakhir LIKE '%S-1%' OR pendidikan_terakhir LIKE '%STRATA I%' OR pendidikan_terakhir LIKE '%STRATA 1%' OR pendidikan_terakhir LIKE '%SARJANA%' OR pendidikan_terakhir LIKE '%D4%' OR pendidikan_terakhir LIKE '%DIPLOMA IV%') AND pendidikan_terakhir NOT LIKE '%SARJANA MUDA%' THEN 1 ELSE 0 END) AS edu_s1,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S2%' OR pendidikan_terakhir LIKE '%S-2%' OR pendidikan_terakhir LIKE '%STRATA II%' OR pendidikan_terakhir LIKE '%STRATA 2%' OR pendidikan_terakhir LIKE '%MAGISTER%' OR pendidikan_terakhir LIKE '%MASTER%') THEN 1 ELSE 0 END) AS edu_s2,
-                SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S3%' OR pendidikan_terakhir LIKE '%S-3%' OR pendidikan_terakhir LIKE '%STRATA III%' OR pendidikan_terakhir LIKE '%STRATA 3%' OR pendidikan_terakhir LIKE '%DOKTOR%' OR pendidikan_terakhir LIKE '%DOCTOR%') THEN 1 ELSE 0 END) AS edu_s3
-            FROM employees
-        ");
+        $stats = Cache::remember('manpower_stats', 300, function () {
+            // Single efficient query using conditional aggregation instead of 15+ separate queries
+            $row = DB::selectOne("
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' THEN 1 ELSE 0 END) AS active,
+                    SUM(CASE WHEN status_karyawan = 'NON ACTIVE' THEN 1 ELSE 0 END) AS non_active,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'PKWT' THEN 1 ELSE 0 END) AS pkwt,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'PKWTT' THEN 1 ELSE 0 END) AS pkwtt,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND status_hubungan_kerja = 'SKPKT' THEN 1 ELSE 0 END) AS skpkt,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND lokal_nonlokal LIKE '%LOKAL%' AND lokal_nonlokal NOT LIKE '%NON%' THEN 1 ELSE 0 END) AS lokal,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND lokal_nonlokal LIKE '%NON%' THEN 1 ELSE 0 END) AS non_lokal,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (jenis_kelamin LIKE '%LAKI%' OR jenis_kelamin = '1' OR jenis_kelamin = 'L') THEN 1 ELSE 0 END) AS laki_laki,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (jenis_kelamin LIKE '%PEREMPUAN%' OR jenis_kelamin = '2' OR jenis_kelamin = 'P') THEN 1 ELSE 0 END) AS perempuan,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir IS NULL OR pendidikan_terakhir = '' OR pendidikan_terakhir = '-') THEN 1 ELSE 0 END) AS pendidikan_kosong,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SD%' OR pendidikan_terakhir LIKE '%SEKOLAH DASAR%' OR pendidikan_terakhir LIKE '%PAKET A%' OR pendidikan_terakhir LIKE '%IBTIDAIYAH%') THEN 1 ELSE 0 END) AS edu_sd,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SMP%' OR pendidikan_terakhir LIKE '%SLTP%' OR pendidikan_terakhir LIKE '%MTS%' OR pendidikan_terakhir LIKE '%PAKET B%' OR pendidikan_terakhir LIKE '%TSANAWIYAH%') THEN 1 ELSE 0 END) AS edu_smp,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%SMA%' OR pendidikan_terakhir LIKE '%SMK%' OR pendidikan_terakhir LIKE '%SLTA%' OR pendidikan_terakhir LIKE '%STM%' OR pendidikan_terakhir LIKE '%SMEA%' OR pendidikan_terakhir LIKE '%SMU%' OR pendidikan_terakhir LIKE '%PAKET C%' OR pendidikan_terakhir LIKE '%ALIYAH%' OR pendidikan_terakhir LIKE '%KEJURUAN%') THEN 1 ELSE 0 END) AS edu_sma,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%D3%' OR pendidikan_terakhir LIKE '%D-3%' OR pendidikan_terakhir LIKE '%DIPLOMA III%' OR pendidikan_terakhir LIKE '%DIPLOMA 3%' OR pendidikan_terakhir LIKE '%AKADEMI%' OR pendidikan_terakhir LIKE '%SARJANA MUDA%' OR pendidikan_terakhir LIKE '%A.MD%') THEN 1 ELSE 0 END) AS edu_d3,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S1%' OR pendidikan_terakhir LIKE '%S-1%' OR pendidikan_terakhir LIKE '%STRATA I%' OR pendidikan_terakhir LIKE '%STRATA 1%' OR pendidikan_terakhir LIKE '%SARJANA%' OR pendidikan_terakhir LIKE '%D4%' OR pendidikan_terakhir LIKE '%DIPLOMA IV%') AND pendidikan_terakhir NOT LIKE '%SARJANA MUDA%' THEN 1 ELSE 0 END) AS edu_s1,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S2%' OR pendidikan_terakhir LIKE '%S-2%' OR pendidikan_terakhir LIKE '%STRATA II%' OR pendidikan_terakhir LIKE '%STRATA 2%' OR pendidikan_terakhir LIKE '%MAGISTER%' OR pendidikan_terakhir LIKE '%MASTER%') THEN 1 ELSE 0 END) AS edu_s2,
+                    SUM(CASE WHEN status_karyawan = 'ACTIVE' AND (pendidikan_terakhir LIKE '%S3%' OR pendidikan_terakhir LIKE '%S-3%' OR pendidikan_terakhir LIKE '%STRATA III%' OR pendidikan_terakhir LIKE '%STRATA 3%' OR pendidikan_terakhir LIKE '%DOKTOR%' OR pendidikan_terakhir LIKE '%DOCTOR%') THEN 1 ELSE 0 END) AS edu_s3
+                FROM employees
+            ");
 
-        return response()->json([
-            'total'             => (int) $row->total,
-            'active'            => (int) $row->active,
-            'non_active'        => (int) $row->non_active,
-            'pkwt'              => (int) $row->pkwt,
-            'pkwtt'             => (int) $row->pkwtt,
-            'skpkt'             => (int) $row->skpkt,
-            'lokal'             => (int) $row->lokal,
-            'non_lokal'         => (int) $row->non_lokal,
-            'laki_laki'         => (int) $row->laki_laki,
-            'perempuan'         => (int) $row->perempuan,
-            'pendidikan_kosong' => (int) $row->pendidikan_kosong,
-            'edu_sd'            => (int) $row->edu_sd,
-            'edu_smp'           => (int) $row->edu_smp,
-            'edu_sma'           => (int) $row->edu_sma,
-            'edu_d3'            => (int) $row->edu_d3,
-            'edu_s1'            => (int) $row->edu_s1,
-            'edu_s2'            => (int) $row->edu_s2,
-            'edu_s3'            => (int) $row->edu_s3,
-        ]);
+            return [
+                'total'             => (int) ($row->total ?? 0),
+                'active'            => (int) ($row->active ?? 0),
+                'non_active'        => (int) ($row->non_active ?? 0),
+                'pkwt'              => (int) ($row->pkwt ?? 0),
+                'pkwtt'             => (int) ($row->pkwtt ?? 0),
+                'skpkt'             => (int) ($row->skpkt ?? 0),
+                'lokal'             => (int) ($row->lokal ?? 0),
+                'non_lokal'         => (int) ($row->non_lokal ?? 0),
+                'laki_laki'         => (int) ($row->laki_laki ?? 0),
+                'perempuan'         => (int) ($row->perempuan ?? 0),
+                'pendidikan_kosong' => (int) ($row->pendidikan_kosong ?? 0),
+                'edu_sd'            => (int) ($row->edu_sd ?? 0),
+                'edu_smp'           => (int) ($row->edu_smp ?? 0),
+                'edu_sma'           => (int) ($row->edu_sma ?? 0),
+                'edu_d3'            => (int) ($row->edu_d3 ?? 0),
+                'edu_s1'            => (int) ($row->edu_s1 ?? 0),
+                'edu_s2'            => (int) ($row->edu_s2 ?? 0),
+                'edu_s3'            => (int) ($row->edu_s3 ?? 0),
+            ];
+        });
+
+        return response()->json($stats);
     }
 
     /**
@@ -337,50 +392,52 @@ class EmployeeApiController extends Controller
     }
 
     /**
-     * Get unique list of existing jabatan/positions for dropdown filter.
+     * Get unique list of existing jabatan/positions for dropdown filter with 5-minute cache.
      */
     public function positions(): JsonResponse
     {
-        $positions = Employee::whereNotNull('jabatan')
-            ->where('jabatan', '!=', '')
-            ->distinct()
-            ->pluck('jabatan')
-            ->sort()
-            ->values();
+        $positions = Cache::remember('manpower_positions', 300, function () {
+            return Employee::whereNotNull('jabatan')
+                ->where('jabatan', '!=', '')
+                ->distinct()
+                ->pluck('jabatan')
+                ->sort()
+                ->values();
+        });
 
         return response()->json($positions);
     }
 
     /**
-     * Bootstrap endpoint: combine stats + departments + positions + educations in 1 call.
-     * Reduces 4 separate API requests to 1 on page load.
+     * Bootstrap endpoint: combine stats + departments + positions + educations in 1 call with 5-minute cache.
+     * Reduces 4 separate API requests to 1 on page load, returning in < 10ms when cached.
      */
     public function bootstrap(): JsonResponse
     {
-        // Stats (1 query)
-        $statsResponse = $this->stats();
-        $stats = json_decode($statsResponse->getContent(), true);
+        $data = Cache::remember('manpower_bootstrap', 300, function () {
+            // Stats
+            $statsResponse = $this->stats();
+            $stats = json_decode($statsResponse->getContent(), true);
 
-        // Departments
-        $departments = Department::orderBy('name')->get();
+            // Departments
+            $departments = Department::orderBy('name')->get();
 
-        // Positions
-        $positions = Employee::whereNotNull('jabatan')
-            ->where('jabatan', '!=', '')
-            ->distinct()
-            ->pluck('jabatan')
-            ->sort()
-            ->values();
+            // Positions
+            $positionsResponse = $this->positions();
+            $positions = json_decode($positionsResponse->getContent(), true);
 
-        // Educations (static)
-        $educations = ['SD', 'SMP', 'SMA/SMK', 'D3', 'S1', 'S2', 'S3'];
+            // Educations (static)
+            $educations = ['SD', 'SMP', 'SMA/SMK', 'D3', 'S1', 'S2', 'S3'];
 
-        return response()->json([
-            'stats'       => $stats,
-            'departments' => $departments,
-            'positions'   => $positions,
-            'educations'  => $educations,
-        ]);
+            return [
+                'stats'       => $stats,
+                'departments' => $departments,
+                'positions'   => $positions,
+                'educations'  => $educations,
+            ];
+        });
+
+        return response()->json($data);
     }
 
     /**
@@ -561,6 +618,7 @@ class EmployeeApiController extends Controller
             } catch (\Exception $e) {}
         }
 
+        self::flushManpowerCache();
         return response()->json($employee->load(['contractHistories', 'families']), 201);
     }
 
@@ -712,6 +770,7 @@ class EmployeeApiController extends Controller
             }
         }
 
+        self::flushManpowerCache();
         return response()->json($employee->load(['contractHistories', 'families']));
     }
 
@@ -733,6 +792,7 @@ class EmployeeApiController extends Controller
         }
 
         $employee->delete();
+        self::flushManpowerCache();
 
         return response()->json(['message' => 'Data karyawan berhasil dihapus']);
     }
@@ -760,6 +820,8 @@ class EmployeeApiController extends Controller
                 ContractHistory::query()->delete();
                 Employee::query()->delete();
             });
+
+            self::flushManpowerCache();
 
             return response()->json([
                 'success' => true,
@@ -804,6 +866,8 @@ class EmployeeApiController extends Controller
                 ContractHistory::whereIn('employee_id', $ids)->delete();
                 Employee::whereIn('id', $ids)->delete();
             });
+
+            self::flushManpowerCache();
 
             return response()->json([
                 'success' => true,
@@ -1392,6 +1456,8 @@ class EmployeeApiController extends Controller
         $msg = !empty($msgParts) ? implode(', ', $msgParts) . ' berhasil diproses!' : 'Tidak ada data yang diproses.';
         if ($skipped > 0) $msg .= " ({$skipped} dilewati)";
 
+        self::flushManpowerCache();
+
         return response()->json([
             'message'             => $msg,
             'imported'            => $importedEmployees,
@@ -1949,6 +2015,7 @@ class EmployeeApiController extends Controller
         ]);
 
         $dept = Department::create(['name' => $request->name]);
+        self::flushManpowerCache();
         return response()->json($dept, 201);
     }
 
@@ -1960,6 +2027,7 @@ class EmployeeApiController extends Controller
         ]);
 
         $dept->update(['name' => $request->name]);
+        self::flushManpowerCache();
         return response()->json($dept);
     }
 
@@ -1967,6 +2035,7 @@ class EmployeeApiController extends Controller
     {
         $dept = Department::findOrFail($id);
         $dept->delete();
+        self::flushManpowerCache();
         return response()->json(['message' => 'Departemen berhasil dihapus']);
     }
 }
