@@ -17,6 +17,7 @@ class AdminSeeder extends Seeder
                 'username' => 'Admin',
                 'email'    => 'admin@ptk2b.com',
                 'password' => Hash::make(env('ADMIN_INITIAL_PASSWORD', 'Secure!K2B#2026@Pass')),
+                'role'     => 'admin',
             ]
         );
     }
