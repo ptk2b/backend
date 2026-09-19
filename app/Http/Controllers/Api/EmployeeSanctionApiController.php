@@ -212,21 +212,16 @@ class EmployeeSanctionApiController extends Controller
         $year = (int) $request->input('year', Carbon::now()->year);
         $filterDept = $request->input('departemen');
 
-        // Fetch all distinct departments from employees and sanctions
-        $dbDepts = Employee::whereNotNull('departemen')
-            ->where('departemen', '!=', '')
-            ->distinct()
-            ->pluck('departemen')
-            ->toArray();
-
-        $sanctionDepts = EmployeeSanction::whereNotNull('departemen')
-            ->where('departemen', '!=', '')
-            ->distinct()
-            ->pluck('departemen')
-            ->toArray();
-
-        // Combine standard areas + DB departments
-        $allDepts = array_values(array_unique(array_merge(self::STANDARD_AREAS, $dbDepts, $sanctionDepts)));
+        // Fetch official departments from master Department table, or distinct from employees/sanctions
+        $tableDepts = Department::pluck('name')->filter()->map(fn($d) => trim($d))->toArray();
+        if (!empty($tableDepts)) {
+            $allDepts = array_values(array_unique(array_filter($tableDepts)));
+        } else {
+            $dbDepts = Employee::whereNotNull('departemen')->where('departemen', '!=', '')->distinct()->pluck('departemen')->map(fn($d) => trim($d))->toArray();
+            $sanctionDepts = EmployeeSanction::whereNotNull('departemen')->where('departemen', '!=', '')->distinct()->pluck('departemen')->map(fn($d) => trim($d))->toArray();
+            $allDepts = array_values(array_unique(array_filter(array_merge($dbDepts, $sanctionDepts))));
+        }
+        sort($allDepts, SORT_NATURAL | SORT_FLAG_CASE);
 
         if ($filterDept) {
             $allDepts = array_values(array_filter($allDepts, fn($d) => strcasecmp($d, $filterDept) === 0));
@@ -573,14 +568,18 @@ class EmployeeSanctionApiController extends Controller
         $request = $request ?? request();
         $onlyActive = !$request->boolean('include_inactive', false);
 
-        // 1. Departments: standard areas + distinct in active employees + departments table
-        $tableDepts = Department::pluck('name')->toArray();
-        $deptQuery = Employee::whereNotNull('departemen')->where('departemen', '!=', '');
-        if ($onlyActive) {
-            $deptQuery->where('status_karyawan', 'ACTIVE');
+        // 1. Departments: ONLY from master Department table, or active employees if table is empty
+        $tableDepts = Department::pluck('name')->filter()->map(fn($d) => trim($d))->toArray();
+        if (!empty($tableDepts)) {
+            $allDepts = array_values(array_unique(array_filter($tableDepts)));
+        } else {
+            $deptQuery = Employee::whereNotNull('departemen')->where('departemen', '!=', '');
+            if ($onlyActive) {
+                $deptQuery->where('status_karyawan', 'ACTIVE');
+            }
+            $empDepts = $deptQuery->distinct()->pluck('departemen')->map(fn($d) => trim($d))->toArray();
+            $allDepts = array_values(array_unique(array_filter($empDepts)));
         }
-        $empDepts = $deptQuery->distinct()->pluck('departemen')->toArray();
-        $allDepts = array_values(array_unique(array_filter(array_merge(self::STANDARD_AREAS, $tableDepts, $empDepts))));
         sort($allDepts, SORT_NATURAL | SORT_FLAG_CASE);
 
         // 2. Positions from active employees
