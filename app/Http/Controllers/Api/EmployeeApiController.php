@@ -183,24 +183,52 @@ class EmployeeApiController extends Controller
             }
         }
 
-        // Dynamic Sorting
-        $sortBy = $request->input('sort_by', 'nama_lengkap');
+        // Dynamic Sorting & Ranking
+        $sortAge = $request->input('sort_age');
+        $sortMasaKerja = $request->input('sort_masa_kerja');
+        $sortBy = $request->input('sort_by');
         $sortDir = strtolower($request->input('sort_dir', 'asc')) === 'desc' ? 'desc' : 'asc';
-        $allowedSorts = [
-            'nama_lengkap'          => 'nama_lengkap',
-            'nip'                   => 'nip',
-            'nik'                   => 'nik',
-            'jabatan'               => 'jabatan',
-            'departemen'            => 'departemen',
-            'usia'                  => 'usia',
-            'in'                    => 'in',
-            'outtoday'              => 'outtoday',
-            'status_karyawan'       => 'status_karyawan',
-            'status_hubungan_kerja' => 'status_hubungan_kerja',
-            'created_at'            => 'created_at',
-        ];
-        $sortColumn = $allowedSorts[$sortBy] ?? 'nama_lengkap';
-        $query->orderBy($sortColumn, $sortDir);
+
+        if ($sortAge === 'oldest' || ($sortBy === 'usia' && $sortDir === 'desc')) {
+            // Oldest first: earliest birth date or highest age, nulls at the end
+            $query->orderByRaw("CASE 
+                WHEN tanggal_lahir IS NOT NULL AND tanggal_lahir != '0000-00-00' THEN tanggal_lahir 
+                WHEN usia IS NOT NULL AND usia > 0 THEN DATE_SUB(CURDATE(), INTERVAL usia YEAR) 
+                ELSE '9999-12-31' 
+            END ASC");
+        } elseif ($sortAge === 'youngest' || ($sortBy === 'usia' && $sortDir === 'asc')) {
+            // Youngest first: latest birth date or lowest age, nulls at the end
+            $query->orderByRaw("CASE 
+                WHEN tanggal_lahir IS NOT NULL AND tanggal_lahir != '0000-00-00' THEN tanggal_lahir 
+                WHEN usia IS NOT NULL AND usia > 0 THEN DATE_SUB(CURDATE(), INTERVAL usia YEAR) 
+                ELSE '1000-01-01' 
+            END DESC");
+        } elseif ($sortMasaKerja === 'longest' || ($sortBy === 'masa_kerja' && $sortDir === 'desc')) {
+            // Longest masa kerja first, nulls at the end
+            $dateExpr = "TIMESTAMPDIFF(MONTH, `in`, IF(status_karyawan = 'NON ACTIVE' AND outtoday IS NOT NULL, outtoday, CURDATE()))";
+            $query->orderByRaw("CASE WHEN `in` IS NOT NULL THEN {$dateExpr} ELSE -1 END DESC");
+        } elseif ($sortMasaKerja === 'shortest' || ($sortBy === 'masa_kerja' && $sortDir === 'asc')) {
+            // Shortest masa kerja first, nulls at the end
+            $dateExpr = "TIMESTAMPDIFF(MONTH, `in`, IF(status_karyawan = 'NON ACTIVE' AND outtoday IS NOT NULL, outtoday, CURDATE()))";
+            $query->orderByRaw("CASE WHEN `in` IS NOT NULL THEN {$dateExpr} ELSE 999999 END ASC");
+        } else {
+            $allowedSorts = [
+                'nama_lengkap'          => 'nama_lengkap',
+                'nip'                   => 'nip',
+                'nik'                   => 'nik',
+                'jabatan'               => 'jabatan',
+                'departemen'            => 'departemen',
+                'usia'                  => 'usia',
+                'tanggal_lahir'         => 'tanggal_lahir',
+                'in'                    => 'in',
+                'outtoday'              => 'outtoday',
+                'status_karyawan'       => 'status_karyawan',
+                'status_hubungan_kerja' => 'status_hubungan_kerja',
+                'created_at'            => 'created_at',
+            ];
+            $sortColumn = $allowedSorts[$sortBy ?? 'nama_lengkap'] ?? 'nama_lengkap';
+            $query->orderBy($sortColumn, $sortDir);
+        }
 
         if ($request->boolean('all') || $request->input('per_page') === 'all' || (string) $request->input('per_page') === '0') {
             $employees = $query->get();
