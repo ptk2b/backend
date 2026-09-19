@@ -129,6 +129,13 @@ class EmployeeSanctionApiController extends Controller
             }
         }
 
+        // Filter by Employee Status (ACTIVE / NON ACTIVE)
+        if ($empStatus = $request->input('employee_status', $request->input('status_karyawan'))) {
+            $query->whereHas('employee', function ($eq) use ($empStatus) {
+                $eq->where('status_karyawan', strtoupper($empStatus));
+            });
+        }
+
         // Search text (employee name, NIP, NIK, nomor surat)
         if ($search = $request->input('search')) {
             $query->where(function ($q) use ($search) {
@@ -559,23 +566,37 @@ class EmployeeSanctionApiController extends Controller
 
     /**
      * Get lookup options: all departments, all positions, and all employees (for dropdowns).
+     * Only returns ACTIVE employees unless explicitly requested otherwise.
      */
-    public function lookupOptions(): JsonResponse
+    public function lookupOptions(?Request $request = null): JsonResponse
     {
-        // 1. Departments: departments table + distinct in employees + standard areas
+        $request = $request ?? request();
+        $onlyActive = !$request->boolean('include_inactive', false);
+
+        // 1. Departments: standard areas + distinct in active employees + departments table
         $tableDepts = Department::pluck('name')->toArray();
-        $empDepts = Employee::whereNotNull('departemen')->where('departemen', '!=', '')->distinct()->pluck('departemen')->toArray();
+        $deptQuery = Employee::whereNotNull('departemen')->where('departemen', '!=', '');
+        if ($onlyActive) {
+            $deptQuery->where('status_karyawan', 'ACTIVE');
+        }
+        $empDepts = $deptQuery->distinct()->pluck('departemen')->toArray();
         $allDepts = array_values(array_unique(array_filter(array_merge(self::STANDARD_AREAS, $tableDepts, $empDepts))));
         sort($allDepts, SORT_NATURAL | SORT_FLAG_CASE);
 
-        // 2. Positions
-        $positions = Employee::whereNotNull('jabatan')->where('jabatan', '!=', '')->distinct()->pluck('jabatan')->toArray();
+        // 2. Positions from active employees
+        $posQuery = Employee::whereNotNull('jabatan')->where('jabatan', '!=', '');
+        if ($onlyActive) {
+            $posQuery->where('status_karyawan', 'ACTIVE');
+        }
+        $positions = $posQuery->distinct()->pluck('jabatan')->toArray();
         sort($positions, SORT_NATURAL | SORT_FLAG_CASE);
 
-        // 3. All employees (lightweight)
-        $employees = Employee::select('id', 'nip', 'nik', 'nama_lengkap', 'jabatan', 'departemen', 'status_karyawan')
-            ->orderBy('nama_lengkap', 'asc')
-            ->get();
+        // 3. Employees - ONLY ACTIVE
+        $empQuery = Employee::select('id', 'nip', 'nik', 'nama_lengkap', 'jabatan', 'departemen', 'status_karyawan');
+        if ($onlyActive) {
+            $empQuery->where('status_karyawan', 'ACTIVE');
+        }
+        $employees = $empQuery->orderBy('nama_lengkap', 'asc')->get();
 
         return response()->json([
             'status'      => 'success',
