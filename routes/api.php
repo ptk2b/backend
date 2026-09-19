@@ -50,6 +50,13 @@ Route::get('/structure', [OrgStructureApiController::class, 'index']);
 Route::get('/employees/{id}/sk', [EmployeeApiController::class, 'downloadEmployeeSk'])->whereNumber('id');
 Route::get('/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
 Route::get('/contracts/{id}/sk', [EmployeeApiController::class, 'downloadContractSk'])->whereNumber('id');
+Route::get('/admin/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
+Route::get('/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
+
+// Fallback login route for unauthenticated API requests
+Route::get('/login', function () {
+    return response()->json(['message' => 'Unauthenticated.'], 401);
+})->name('login');
 
 // ===== RATE-LIMITED PUBLIC FORM ENDPOINTS =====
 Route::middleware('throttle:10,1')->group(function () {
@@ -90,7 +97,6 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/sanctions/lookup-options', [EmployeeSanctionApiController::class, 'lookupOptions']);
     Route::get('/admin/sanctions/matrix', [EmployeeSanctionApiController::class, 'summaryMatrix']);
     Route::get('/admin/sanctions/employee/{employeeId}/active', [EmployeeSanctionApiController::class, 'activeWarningsByEmployee'])->whereNumber('employeeId');
-    Route::get('/admin/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
     Route::get('/admin/sanctions', [EmployeeSanctionApiController::class, 'index']);
     Route::get('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'show'])->whereNumber('id');
 

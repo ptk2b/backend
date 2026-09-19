@@ -543,21 +543,66 @@ class EmployeeSanctionApiController extends Controller
      */
     public function downloadFile(int $id)
     {
-        $sanction = EmployeeSanction::findOrFail($id);
+        try {
+            $sanction = EmployeeSanction::find($id);
+            if (!$sanction) {
+                return response()->json(['message' => 'Data sanksi tidak ditemukan.'], 404);
+            }
 
-        if (!$sanction->file_sp_path || !Storage::disk('public')->exists($sanction->file_sp_path)) {
-            abort(404, 'Berkas fisik SP tidak ditemukan.');
+            if (empty($sanction->file_sp_path)) {
+                return response()->json(['message' => 'Berkas lampiran SP belum diunggah untuk sanksi ini.'], 404);
+            }
+
+            $rawPath = ltrim(str_replace('\\', '/', $sanction->file_sp_path), '/');
+            $filename = basename($rawPath);
+
+            // Candidate paths on standard Laravel, symlinks, or cPanel structure
+            $candidatePaths = [
+                Storage::disk('public')->path($rawPath),
+                storage_path('app/public/' . $rawPath),
+                public_path('storage/' . $rawPath),
+                public_path($rawPath),
+                base_path('../public_html/storage/' . $rawPath),
+                storage_path('app/public/sanctions/' . $filename),
+                public_path('storage/sanctions/' . $filename),
+                base_path('../public_html/storage/sanctions/' . $filename),
+            ];
+
+            $resolvedFile = null;
+            foreach ($candidatePaths as $p) {
+                if (!empty($p) && file_exists($p) && is_file($p)) {
+                    $resolvedFile = $p;
+                    break;
+                }
+            }
+
+            if ($resolvedFile) {
+                $mime = mime_content_type($resolvedFile) ?: 'application/pdf';
+                return response()->file($resolvedFile, [
+                    'Content-Type'                => $mime,
+                    'Content-Disposition'         => "inline; filename=\"{$filename}\"",
+                    'Access-Control-Allow-Origin' => '*',
+                    'Cache-Control'               => 'public, max-age=86400',
+                ]);
+            }
+
+            // Fallback to Storage disk response
+            if (Storage::disk('public')->exists($rawPath)) {
+                return Storage::disk('public')->response($rawPath, $filename, [
+                    'Content-Disposition'         => "inline; filename=\"{$filename}\"",
+                    'Access-Control-Allow-Origin' => '*',
+                ]);
+            }
+
+            return response()->json([
+                'message' => 'Berkas fisik SP tidak ditemukan di server penyimpanan. Kemungkinan berkas belum diunggah atau berada di folder lain.'
+            ], 404);
+        } catch (\Throwable $e) {
+            Log::error("Error in EmployeeSanctionApiController::downloadFile #{$id}: " . $e->getMessage());
+            return response()->json([
+                'message' => 'Gagal membuka berkas SP: ' . $e->getMessage()
+            ], 500);
         }
-
-        $fullPath = Storage::disk('public')->path($sanction->file_sp_path);
-        $filename = basename($sanction->file_sp_path);
-        $mime = mime_content_type($fullPath) ?: 'application/octet-stream';
-
-        return response()->file($fullPath, [
-            'Content-Type'                => $mime,
-            'Content-Disposition'         => "inline; filename=\"{$filename}\"",
-            'Access-Control-Allow-Origin' => '*',
-        ]);
     }
 
     /**
