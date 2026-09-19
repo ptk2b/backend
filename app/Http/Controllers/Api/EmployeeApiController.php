@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\EmployeeFamily;
 use App\Models\ContractHistory;
 use App\Models\Department;
+use App\Models\EmployeeSanction;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
@@ -478,7 +479,8 @@ class EmployeeApiController extends Controller
      */
     public function show($id): JsonResponse
     {
-        $employee = Employee::with(['contractHistories', 'families', 'sanctions'])->findOrFail($id);
+        EmployeeSanction::syncExpiredStatus();
+        $employee = Employee::with(['contractHistories', 'families', 'sanctions', 'activeSanctions'])->findOrFail($id);
         if (strtoupper($employee->status_hubungan_kerja ?? '') === 'PKWT' && !empty($employee->in)) {
             try {
                 $minEnd = Carbon::parse($employee->in)->addMonths(6)->subDay();

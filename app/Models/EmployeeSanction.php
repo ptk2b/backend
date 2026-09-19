@@ -58,7 +58,33 @@ class EmployeeSanction extends Model
                     }
                 }
             }
+
+            // If tanggal_berakhir has passed and status is AKTIF, auto-update status to EXPIRED
+            if ($sanction->tanggal_berakhir && Carbon::today()->gt(Carbon::parse($sanction->tanggal_berakhir)) && $sanction->status === 'AKTIF') {
+                $sanction->status = 'EXPIRED';
+            }
         });
+
+        static::retrieved(function (EmployeeSanction $sanction) {
+            if ($sanction->status === 'AKTIF' && $sanction->tanggal_berakhir && Carbon::today()->gt(Carbon::parse($sanction->tanggal_berakhir))) {
+                $sanction->status = 'EXPIRED';
+            }
+        });
+    }
+
+    /**
+     * Auto-sync status of sanctions that have passed their expiration date in the database.
+     */
+    public static function syncExpiredStatus(): void
+    {
+        try {
+            static::where('status', 'AKTIF')
+                ->whereNotNull('tanggal_berakhir')
+                ->where('tanggal_berakhir', '<', Carbon::today())
+                ->update(['status' => 'EXPIRED']);
+        } catch (\Throwable $e) {
+            // Silently ignore if table not accessible
+        }
     }
 
     public function employee(): BelongsTo
@@ -76,7 +102,7 @@ class EmployeeSanction extends Model
      */
     public function getIsActiveAttribute(): bool
     {
-        if (in_array(strtoupper($this->status), ['DICABUT', 'ESKALASI'])) {
+        if (in_array(strtoupper($this->status), ['EXPIRED', 'DICABUT', 'ESKALASI'])) {
             return false;
         }
 
@@ -123,10 +149,14 @@ class EmployeeSanction extends Model
             return 'PHK';
         }
 
-        if (!$this->tanggal_berakhir) {
-            return 'AKTIF';
+        if ($this->tanggal_berakhir && Carbon::today()->gt(Carbon::parse($this->tanggal_berakhir))) {
+            return 'EXPIRED';
         }
 
-        return Carbon::today()->lte(Carbon::parse($this->tanggal_berakhir)) ? 'AKTIF' : 'EXPIRED';
+        if (strtoupper($this->status) === 'EXPIRED') {
+            return 'EXPIRED';
+        }
+
+        return 'AKTIF';
     }
 }

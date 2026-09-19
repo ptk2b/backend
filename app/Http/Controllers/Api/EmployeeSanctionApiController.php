@@ -57,6 +57,7 @@ class EmployeeSanctionApiController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
+        EmployeeSanction::syncExpiredStatus();
         $query = EmployeeSanction::with(['employee:id,nip,nik,nama_lengkap,jabatan,departemen,status_karyawan,status_hubungan_kerja', 'creator:id,name,username']);
 
         // Filter by Year
