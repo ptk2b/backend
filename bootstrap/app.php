@@ -17,7 +17,8 @@ return Application::configure(basePath: dirname(__DIR__))
             \App\Http\Middleware\PreventRequestsCaching::class,
         ]);
         $middleware->alias([
-            'role.admin' => \App\Http\Middleware\EnsureUserIsAdmin::class,
+            'role.admin'        => \App\Http\Middleware\EnsureUserIsAdmin::class,
+            'role.admin_or_hrd' => \App\Http\Middleware\EnsureAdminOrHrd::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

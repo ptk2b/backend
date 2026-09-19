@@ -6,21 +6,19 @@ use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
-class EnsureUserIsAdmin
+class EnsureAdminOrHrd
 {
     /**
-     * Handle an incoming request.
-     *
-     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
+     * Handle an incoming request for Admin or HRD roles.
      */
     public function handle(Request $request, Closure $next): Response
     {
         $user = $request->user();
 
-        if (!$user || $user->role !== 'admin') {
+        if (!$user || !in_array($user->role, ['admin', 'hrd'])) {
             return response()->json([
                 'status'  => 'error',
-                'message' => 'Akses ditolak: Hanya Administrator yang diizinkan mengubah data Man Power.',
+                'message' => 'Akses ditolak: Hanya Admin dan HRD yang diizinkan melakukan perubahan data sanksi dan SP.',
             ], 403);
         }
 

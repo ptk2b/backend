@@ -36,7 +36,7 @@ class UserApiController extends Controller
             'username' => 'required|string|max:100|unique:users,username',
             'email'    => 'nullable|email|unique:users,email',
             'password' => 'required|string|min:6',
-            'role'     => 'required|in:admin,viewer',
+            'role'     => 'required|in:admin,viewer,hrd',
         ], [
             'name.required'     => 'Nama lengkap wajib diisi.',
             'username.required' => 'Username wajib diisi.',
@@ -44,7 +44,7 @@ class UserApiController extends Controller
             'password.required' => 'Password wajib diisi.',
             'password.min'      => 'Password minimal 6 karakter.',
             'role.required'     => 'Role wajib dipilih.',
-            'role.in'           => 'Role hanya boleh admin atau viewer.',
+            'role.in'           => 'Role hanya boleh admin, viewer, atau hrd.',
         ]);
 
         $email = !empty($validated['email'])

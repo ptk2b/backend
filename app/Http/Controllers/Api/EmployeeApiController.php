@@ -83,10 +83,13 @@ class EmployeeApiController extends Controller
      */
     public function index(Request $request): JsonResponse
     {
-        $query = Employee::withCount('families');
+        $query = Employee::withCount('families')
+            ->with(['activeSanctions' => function ($q) {
+                $q->select('id', 'employee_id', 'nomor_surat', 'tingkat_sanksi', 'jenis_pelanggaran', 'tanggal_sp', 'tanggal_berakhir', 'status');
+            }]);
 
         if ($request->boolean('with_relations')) {
-            $query->with(['families', 'contractHistories']);
+            $query->with(['families', 'contractHistories', 'sanctions']);
         }
 
         // Search by nama_lengkap, nip, nik, jabatan, departemen, email, no_telp
@@ -445,7 +448,7 @@ class EmployeeApiController extends Controller
      */
     public function show($id): JsonResponse
     {
-        $employee = Employee::with(['contractHistories', 'families'])->findOrFail($id);
+        $employee = Employee::with(['contractHistories', 'families', 'sanctions'])->findOrFail($id);
         if (strtoupper($employee->status_hubungan_kerja ?? '') === 'PKWT' && !empty($employee->in)) {
             try {
                 $minEnd = Carbon::parse($employee->in)->addMonths(6)->subDay();

@@ -165,4 +165,21 @@ class Employee extends Model
     {
         return $this->hasMany(EmployeeFamily::class, 'employee_id')->orderBy('id', 'asc');
     }
+
+    public function sanctions(): HasMany
+    {
+        return $this->hasMany(EmployeeSanction::class)->orderBy('tanggal_sp', 'desc');
+    }
+
+    public function activeSanctions(): HasMany
+    {
+        return $this->hasMany(EmployeeSanction::class)
+            ->where('status', '!=', 'DICABUT')
+            ->where('status', '!=', 'ESKALASI')
+            ->where(function ($q) {
+                $q->whereNull('tanggal_berakhir')
+                  ->orWhere('tanggal_berakhir', '>=', Carbon::today());
+            })
+            ->orderBy('tanggal_sp', 'desc');
+    }
 }

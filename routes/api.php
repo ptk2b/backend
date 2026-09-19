@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\MemoApiController;
 use App\Http\Controllers\Api\SiteContentApiController;
 use App\Http\Controllers\Api\OrgStructureApiController;
 use App\Http\Controllers\Api\EmployeeApiController;
+use App\Http\Controllers\Api\EmployeeSanctionApiController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -84,6 +85,21 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/structure', [OrgStructureApiController::class, 'adminIndex']);
     Route::get('/admin/messages', [SiteContentApiController::class, 'getMessages']);
     Route::get('/admin/applications', [CareerApiController::class, 'getApplications']);
+
+    // Sanksi & SP Karyawan (Read-only: accessible by Admin, HRD, Viewer)
+    Route::get('/admin/sanctions/matrix', [EmployeeSanctionApiController::class, 'summaryMatrix']);
+    Route::get('/admin/sanctions/employee/{employeeId}/active', [EmployeeSanctionApiController::class, 'activeWarningsByEmployee'])->whereNumber('employeeId');
+    Route::get('/admin/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
+    Route::get('/admin/sanctions', [EmployeeSanctionApiController::class, 'index']);
+    Route::get('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'show'])->whereNumber('id');
+
+    // Sanksi & SP Karyawan Mutations (Accessible by Admin and HRD)
+    Route::middleware('role.admin_or_hrd')->group(function () {
+        Route::post('/admin/sanctions', [EmployeeSanctionApiController::class, 'store']);
+        Route::post('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
+        Route::put('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
+        Route::delete('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'destroy'])->whereNumber('id');
+    });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====
     Route::middleware('role.admin')->group(function () {
