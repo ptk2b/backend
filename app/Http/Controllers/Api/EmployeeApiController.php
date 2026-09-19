@@ -208,8 +208,10 @@ class EmployeeApiController extends Controller
         }
 
         $perPage = (int) $request->input('per_page', 50);
-        if ($perPage <= 0 || $perPage > 200) {
+        if ($perPage <= 0) {
             $perPage = 50;
+        } elseif ($perPage > 5000) {
+            $perPage = 5000;
         }
 
         $paginated = $query->paginate($perPage);

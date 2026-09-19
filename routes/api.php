@@ -87,6 +87,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/applications', [CareerApiController::class, 'getApplications']);
 
     // Sanksi & SP Karyawan (Read-only: accessible by Admin, HRD, Viewer)
+    Route::get('/admin/sanctions/lookup-options', [EmployeeSanctionApiController::class, 'lookupOptions']);
     Route::get('/admin/sanctions/matrix', [EmployeeSanctionApiController::class, 'summaryMatrix']);
     Route::get('/admin/sanctions/employee/{employeeId}/active', [EmployeeSanctionApiController::class, 'activeWarningsByEmployee'])->whereNumber('employeeId');
     Route::get('/admin/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');

@@ -19,6 +19,7 @@ class EmployeeSanctionApiController extends Controller
      * Standard Area Kerja list matching corporate mining reference.
      */
     const STANDARD_AREAS = [
+        'ADMINISTRASI',
         'SM-D PRODUKSI',
         'SM-C PRODUKSI',
         'PAKU/COAL PRODUKSI',
@@ -553,6 +554,34 @@ class EmployeeSanctionApiController extends Controller
             'Content-Type'                => $mime,
             'Content-Disposition'         => "inline; filename=\"{$filename}\"",
             'Access-Control-Allow-Origin' => '*',
+        ]);
+    }
+
+    /**
+     * Get lookup options: all departments, all positions, and all employees (for dropdowns).
+     */
+    public function lookupOptions(): JsonResponse
+    {
+        // 1. Departments: departments table + distinct in employees + standard areas
+        $tableDepts = Department::pluck('name')->toArray();
+        $empDepts = Employee::whereNotNull('departemen')->where('departemen', '!=', '')->distinct()->pluck('departemen')->toArray();
+        $allDepts = array_values(array_unique(array_filter(array_merge(self::STANDARD_AREAS, $tableDepts, $empDepts))));
+        sort($allDepts, SORT_NATURAL | SORT_FLAG_CASE);
+
+        // 2. Positions
+        $positions = Employee::whereNotNull('jabatan')->where('jabatan', '!=', '')->distinct()->pluck('jabatan')->toArray();
+        sort($positions, SORT_NATURAL | SORT_FLAG_CASE);
+
+        // 3. All employees (lightweight)
+        $employees = Employee::select('id', 'nip', 'nik', 'nama_lengkap', 'jabatan', 'departemen', 'status_karyawan')
+            ->orderBy('nama_lengkap', 'asc')
+            ->get();
+
+        return response()->json([
+            'status'      => 'success',
+            'departments' => $allDepts,
+            'positions'   => $positions,
+            'employees'   => $employees,
         ]);
     }
 }
