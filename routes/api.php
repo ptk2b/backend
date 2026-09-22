@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\SiteContentApiController;
 use App\Http\Controllers\Api\OrgStructureApiController;
 use App\Http\Controllers\Api\EmployeeApiController;
 use App\Http\Controllers\Api\EmployeeSanctionApiController;
+use App\Http\Controllers\Api\AttendanceApiController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -106,6 +107,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
         Route::put('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
         Route::delete('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'destroy'])->whereNumber('id');
+
+        // Monitoring Absensi Karyawan (Admin & HRD)
+        Route::get('/admin/attendance/matrix', [AttendanceApiController::class, 'matrix']);
+        Route::post('/admin/attendance/update', [AttendanceApiController::class, 'update']);
+        Route::post('/admin/attendance/seed-initial', [AttendanceApiController::class, 'seedInitial']);
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====
