@@ -8,39 +8,10 @@ use App\Http\Controllers\Api\OrgStructureApiController;
 use App\Http\Controllers\Api\EmployeeApiController;
 use App\Http\Controllers\Api\EmployeeSanctionApiController;
 use App\Http\Controllers\Api\AttendanceApiController;
+use App\Http\Controllers\Api\UserApiController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
-Route::get('/reset-admin', function () {
-    $user = \App\Models\User::updateOrCreate(
-        ['username' => 'Admin'],
-        [
-            'name'     => 'Administrator',
-            'username' => 'Admin',
-            'email'    => 'admin@ptk2b.com',
-            'password' => \Illuminate\Support\Facades\Hash::make('Secure!K2B#2026@Pass'),
-            'role'     => 'admin',
-        ]
-    );
-    return 'Admin user seeded/reset successfully! Username: Admin, Password: Secure!K2B#2026@Pass';
-});
-
-Route::get('/run-migrations', function () {
-    try {
-        \Illuminate\Support\Facades\Artisan::call('migrate', ['--force' => true]);
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Migrations executed successfully!',
-            'output' => \Illuminate\Support\Facades\Artisan::output()
-        ]);
-    } catch (\Exception $e) {
-        return response()->json([
-            'status' => 'error',
-            'message' => $e->getMessage()
-        ], 500);
-    }
-});
-
 Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
@@ -52,7 +23,6 @@ Route::get('/employees/{id}/sk', [EmployeeApiController::class, 'downloadEmploye
 Route::get('/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
 Route::get('/contracts/{id}/sk', [EmployeeApiController::class, 'downloadContractSk'])->whereNumber('id');
 Route::get('/admin/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
-Route::get('/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
 
 // Fallback login route for unauthenticated API requests
 Route::get('/login', function () {
@@ -66,11 +36,7 @@ Route::middleware('throttle:10,1')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
 });
 
-
-use App\Http\Controllers\Api\UserApiController;
-
 // ===== PROTECTED ROUTES =====
-
 Route::middleware('auth:sanctum')->group(function () {
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/logout', [AuthController::class, 'logout']);
@@ -79,12 +45,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/admin/employees/bootstrap', [EmployeeApiController::class, 'bootstrap']);
     Route::get('/admin/employees/stats', [EmployeeApiController::class, 'stats']);
     Route::get('/admin/employees/expiring', [EmployeeApiController::class, 'expiring']);
-    Route::get('/admin/employees/expiring-contracts', [EmployeeApiController::class, 'expiring']);
     Route::get('/admin/employees/positions', [EmployeeApiController::class, 'positions']);
     Route::get('/admin/employees/educations', [EmployeeApiController::class, 'educations']);
-    Route::get('/admin/employees/export', [EmployeeApiController::class, 'export']);
-    Route::get('/admin/employees/import-template', [EmployeeApiController::class, 'importTemplate']);
-    Route::get('/admin/employees/sk/{filename}', [EmployeeApiController::class, 'downloadSk']);
     Route::get('/admin/employees', [EmployeeApiController::class, 'index']);
     Route::get('/admin/employees/{id}', [EmployeeApiController::class, 'show'])->whereNumber('id');
     Route::get('/admin/departments', [EmployeeApiController::class, 'departments']);
@@ -104,8 +66,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Sanksi & SP Karyawan Mutations (Accessible by Admin and HRD)
     Route::middleware('role.admin_or_hrd')->group(function () {
         Route::post('/admin/sanctions', [EmployeeSanctionApiController::class, 'store']);
-        Route::post('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
-        Route::put('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
+        Route::match(['post', 'put'], '/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'update'])->whereNumber('id');
         Route::delete('/admin/sanctions/{id}', [EmployeeSanctionApiController::class, 'destroy'])->whereNumber('id');
 
         // Monitoring Absensi Karyawan (Admin & HRD)
@@ -137,8 +98,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
         // Org Structure Mutation
         Route::post('/admin/structure', [OrgStructureApiController::class, 'store']);
-        Route::post('/admin/structure/{id}', [OrgStructureApiController::class, 'update']);
-        Route::put('/admin/structure/{id}', [OrgStructureApiController::class, 'update']);
+        Route::match(['post', 'put'], '/admin/structure/{id}', [OrgStructureApiController::class, 'update']);
         Route::delete('/admin/structure/{id}', [OrgStructureApiController::class, 'destroy']);
 
         // Messages & Applications Deletion
@@ -166,5 +126,3 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/admin/departments/{id}', [EmployeeApiController::class, 'destroyDepartment']);
     });
 });
-
-
