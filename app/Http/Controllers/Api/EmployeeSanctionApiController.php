@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Carbon\Carbon;
+use App\Rules\SecureFile;
 
 class EmployeeSanctionApiController extends Controller
 {
@@ -390,7 +391,7 @@ class EmployeeSanctionApiController extends Controller
             'tanggal_berakhir'    => 'nullable|date',
             'alasan_pelanggaran'  => 'nullable|string',
             'kronologi'           => 'nullable|string',
-            'file_sp'             => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'file_sp'             => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 3072)],
             'catatan'             => 'nullable|string',
         ]);
 
@@ -490,7 +491,7 @@ class EmployeeSanctionApiController extends Controller
             'alasan_pelanggaran' => 'nullable|string',
             'kronologi'          => 'nullable|string',
             'status'             => 'nullable|string|in:AKTIF,EXPIRED,DICABUT,ESKALASI',
-            'file_sp'            => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'file_sp'            => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 3072)],
             'catatan'            => 'nullable|string',
         ]);
 

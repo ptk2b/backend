@@ -16,6 +16,9 @@ Options +FollowSymLinks
     # Block access to hidden directories
     RedirectMatch 404 /\.git
 
+    # Block direct execution of script files inside storage and uploads
+    RewriteRule ^(storage|uploads)/.*\.(php|phtml|php[0-9]|phps|phar|cgi|pl|py|sh|bash|exe|bat|cmd)$ - [F,L,NC]
+
     # Handle Authorization Header
     RewriteCond %{HTTP:Authorization} .
     RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]

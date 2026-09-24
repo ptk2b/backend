@@ -9,6 +9,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Log;
+use App\Rules\SecureFile;
 
 class CareerApiController extends Controller
 {
@@ -233,7 +234,7 @@ class CareerApiController extends Controller
             'email'        => 'required|email|max:255',
             'phone'        => 'nullable|string|max:30',
             'cover_letter' => 'nullable|string',
-            'cv_file'      => 'nullable|file|mimes:pdf|max:3072', // PDF max 3MB (3072 KB)
+            'cv_file'      => ['nullable', 'file', new SecureFile(['pdf'], 3072)], // PDF max 3MB with deep security scan
         ]);
 
         // Find career or set fallback title

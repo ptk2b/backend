@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use App\Rules\SecureFile;
 
 class MemoApiController extends Controller
 {
@@ -40,7 +41,7 @@ class MemoApiController extends Controller
             'memo_number' => 'nullable|string|max:100',
             'category'    => 'required|string|max:100',
             'description' => 'nullable|string',
-            'file'        => 'required|file|mimes:pdf|max:10240', // max 10MB
+            'file'        => ['required', 'file', new SecureFile(['pdf'], 10240)],
         ]);
 
         $file = $request->file('file');

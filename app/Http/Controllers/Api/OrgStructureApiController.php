@@ -8,6 +8,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\File;
+use App\Rules\SecureFile;
 
 class OrgStructureApiController extends Controller
 {
@@ -62,7 +63,7 @@ class OrgStructureApiController extends Controller
             'division'         => 'required|string|max:255',
             'level'            => 'required|integer|min:1|max:5',
             'parent_id'        => 'nullable|integer|exists:org_structures,id',
-            'photo'            => 'nullable|image|mimes:jpeg,png,jpg,webp|max:4096',
+            'photo'            => ['nullable', 'file', new SecureFile(['jpeg', 'png', 'jpg', 'webp'], 4096)],
             'bio'              => 'nullable|string',
             'responsibilities' => 'nullable|string',
             'sort_order'       => 'nullable|integer',
@@ -117,7 +118,7 @@ class OrgStructureApiController extends Controller
             'division'         => 'required|string|max:255',
             'level'            => 'required|integer|min:1|max:5',
             'parent_id'        => 'nullable|integer',
-            'photo'            => 'nullable|image|mimes:jpeg,png,jpg,webp|max:4096',
+            'photo'            => ['nullable', 'file', new SecureFile(['jpeg', 'png', 'jpg', 'webp'], 4096)],
             'bio'              => 'nullable|string',
             'responsibilities' => 'nullable|string',
             'sort_order'       => 'nullable|integer',

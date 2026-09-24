@@ -17,6 +17,7 @@ use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Cache;
 use Carbon\Carbon;
+use App\Rules\SecureFile;
 
 class EmployeeApiController extends Controller
 {
@@ -567,7 +568,7 @@ class EmployeeApiController extends Controller
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
             'sub_cabang'                    => 'nullable|string|max:150',
             'catatan'                       => 'nullable|string',
-            'sk_file'                       => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 10240)],
         ]);
 
         if ($validator->fails()) {
@@ -733,7 +734,7 @@ class EmployeeApiController extends Controller
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
             'sub_cabang'                    => 'nullable|string|max:100',
             'catatan'                       => 'nullable|string',
-            'sk_file'                       => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 10240)],
         ]);
 
         if ($validator->fails()) {
@@ -1858,7 +1859,7 @@ class EmployeeApiController extends Controller
             'kontrak_ke'         => 'nullable|integer|min:1',
             'catatan'            => 'nullable|string',
             'diserahkan'         => 'nullable|string|max:50',
-            'sk_file'            => 'nullable|file|mimes:pdf,jpg,jpeg,png|max:10240',
+            'sk_file'            => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 10240)],
         ]);
 
         if ($validator->fails()) {
