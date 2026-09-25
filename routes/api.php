@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\OrgStructureApiController;
 use App\Http\Controllers\Api\EmployeeApiController;
 use App\Http\Controllers\Api\EmployeeSanctionApiController;
 use App\Http\Controllers\Api\AttendanceApiController;
+use App\Http\Controllers\Api\FingerprintAttendanceController;
 use App\Http\Controllers\Api\UserApiController;
 use Illuminate\Support\Facades\Route;
 
@@ -73,10 +74,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/attendance/matrix', [AttendanceApiController::class, 'matrix']);
         Route::post('/admin/attendance/update', [AttendanceApiController::class, 'update']);
         Route::post('/admin/attendance/seed-initial', [AttendanceApiController::class, 'seedInitial']);
+
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====
     Route::middleware('role.admin')->group(function () {
+        // Audit Presensi Finger vs Jadwal (Khusus Admin)
+        Route::get('/admin/fingerprint/data', [FingerprintAttendanceController::class, 'data']);
+        Route::post('/admin/fingerprint/sync', [FingerprintAttendanceController::class, 'sync']);
         // User Management & Password Reset
         Route::get('/admin/users', [UserApiController::class, 'index']);
         Route::post('/admin/users', [UserApiController::class, 'store']);
