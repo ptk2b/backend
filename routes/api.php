@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\EmployeeSanctionApiController;
 use App\Http\Controllers\Api\AttendanceApiController;
 use App\Http\Controllers\Api\FingerprintAttendanceController;
 use App\Http\Controllers\Api\UserApiController;
+use App\Http\Controllers\Api\SimperPhotoController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -35,6 +36,12 @@ Route::middleware('throttle:10,1')->group(function () {
     Route::post('/career-apply', [CareerApiController::class, 'apply']);
     Route::post('/contact-message', [SiteContentApiController::class, 'sendContactMessage']);
     Route::post('/login', [AuthController::class, 'login']);
+});
+
+// ===== PUBLIC SIMPER / MINE PERMIT UPLOAD =====
+// Rate limit: 30 request per menit (3 foto per submit, 10 submit per menit max)
+Route::middleware('throttle:30,1')->group(function () {
+    Route::post('/public/upload-simper-photo', [SimperPhotoController::class, 'upload']);
 });
 
 // ===== PROTECTED ROUTES =====
