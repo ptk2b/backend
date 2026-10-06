@@ -128,6 +128,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/admin/employees/{id}', [EmployeeApiController::class, 'destroy'])->whereNumber('id');
         Route::post('/admin/employees/{id}/contracts', [EmployeeApiController::class, 'addContract'])->whereNumber('id');
         Route::delete('/admin/contracts/{id}', [EmployeeApiController::class, 'deleteContract'])->whereNumber('id');
+        Route::post('/admin/employees/{id}/sk', [EmployeeApiController::class, 'uploadEmployeeSk'])->whereNumber('id');
+        Route::post('/admin/contracts/{id}/sk', [EmployeeApiController::class, 'uploadContractSk'])->whereNumber('id');
         Route::post('/admin/employees/{id}/families', [EmployeeApiController::class, 'storeFamily'])->whereNumber('id');
         Route::put('/admin/families/{id}', [EmployeeApiController::class, 'updateFamily'])->whereNumber('id');
         Route::delete('/admin/families/{id}', [EmployeeApiController::class, 'destroyFamily'])->whereNumber('id');

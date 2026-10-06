@@ -13,9 +13,9 @@ class SecureFile implements ValidationRule
 
     /**
      * @param array $allowedExtensions List of allowed extensions, e.g. ['pdf', 'jpg', 'jpeg', 'png']
-     * @param int $maxKb Max size in kilobytes, e.g. 3072 for 3MB
+     * @param int $maxKb Max size in kilobytes, e.g. 20480 for 20MB
      */
-    public function __construct(array $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'], int $maxKb = 3072)
+    public function __construct(array $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'], int $maxKb = 20480)
     {
         $this->allowedExtensions = $allowedExtensions;
         $this->maxKb = $maxKb;

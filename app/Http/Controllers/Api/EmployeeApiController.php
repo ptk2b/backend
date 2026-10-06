@@ -567,7 +567,7 @@ class EmployeeApiController extends Controller
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
             'sub_cabang'                    => 'nullable|string|max:150',
             'catatan'                       => 'nullable|string',
-            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
+            'sk_file'                       => ['nullable', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
         ]);
 
         if ($validator->fails()) {
@@ -742,7 +742,7 @@ class EmployeeApiController extends Controller
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
             'sub_cabang'                    => 'nullable|string|max:100',
             'catatan'                       => 'nullable|string',
-            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
+            'sk_file'                       => ['nullable', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
         ]);
 
         if ($validator->fails()) {
@@ -1897,7 +1897,7 @@ class EmployeeApiController extends Controller
             'kontrak_ke'         => 'nullable|integer|min:1',
             'catatan'            => 'nullable|string',
             'diserahkan'         => 'nullable|string|max:50',
-            'sk_file'            => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
+            'sk_file'            => ['nullable', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
         ]);
 
         if ($validator->fails()) {
@@ -1960,6 +1960,12 @@ class EmployeeApiController extends Controller
                 if (!Storage::disk('public')->exists('contract-sk')) {
                     Storage::disk('public')->makeDirectory('contract-sk');
                 }
+                $existingStage = ContractHistory::where('employee_id', $employee->id)
+                    ->where('kontrak_ke', $targetKontrakKe)
+                    ->first();
+                if ($existingStage && $existingStage->sk_path && Storage::disk('public')->exists($existingStage->sk_path)) {
+                    Storage::disk('public')->delete($existingStage->sk_path);
+                }
                 $data['sk_path'] = $request->file('sk_file')->store('contract-sk', 'public');
             } catch (\Exception $e) {
                 \Log::error("Failed storing contract SK file: " . $e->getMessage());
@@ -1972,13 +1978,85 @@ class EmployeeApiController extends Controller
             $data
         );
 
-        $employee->update([
-            'kontrak'         => 'Kontrak ' . $targetKontrakKe,
-            'outtoday'        => $data['tanggal_selesai'],
-            'status_karyawan' => 'ACTIVE',
-        ]);
+        // Only update employee level if this contract is >= highest existing contract
+        if ($targetKontrakKe >= $highestExisting) {
+            $employee->update([
+                'kontrak'         => 'Kontrak ' . $targetKontrakKe,
+                'outtoday'        => $data['tanggal_selesai'],
+                'status_karyawan' => 'ACTIVE',
+            ]);
+        }
 
         return response()->json($history, 201);
+    }
+
+    public function uploadEmployeeSk(Request $request, $id): JsonResponse
+    {
+        $employee = Employee::findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'sk_file' => ['required', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 422);
+        }
+
+        try {
+            if (!Storage::disk('public')->exists('employee-sk')) {
+                Storage::disk('public')->makeDirectory('employee-sk');
+            }
+            if ($employee->sk_path && Storage::disk('public')->exists($employee->sk_path)) {
+                Storage::disk('public')->delete($employee->sk_path);
+            }
+            $path = $request->file('sk_file')->store('employee-sk', 'public');
+            $employee->update(['sk_path' => $path]);
+
+            return response()->json([
+                'message' => 'Dokumen SK Induk karyawan berhasil diperbarui.',
+                'sk_path' => $path,
+                'employee' => $employee->fresh(['contractHistories', 'families', 'sanctions']),
+            ]);
+        } catch (\Exception $e) {
+            \Log::error("Failed uploading employee SK: " . $e->getMessage());
+            return response()->json(['message' => 'Gagal menyimpan berkas SK: ' . $e->getMessage()], 500);
+        }
+    }
+
+    public function uploadContractSk(Request $request, $id): JsonResponse
+    {
+        $contract = ContractHistory::findOrFail($id);
+
+        $validator = Validator::make($request->all(), [
+            'sk_file' => ['required', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['message' => $validator->errors()->first()], 422);
+        }
+
+        try {
+            if (!Storage::disk('public')->exists('contract-sk')) {
+                Storage::disk('public')->makeDirectory('contract-sk');
+            }
+            if ($contract->sk_path && Storage::disk('public')->exists($contract->sk_path)) {
+                Storage::disk('public')->delete($contract->sk_path);
+            }
+            $path = $request->file('sk_file')->store('contract-sk', 'public');
+            $contract->update(['sk_path' => $path]);
+
+            $employee = Employee::with(['contractHistories', 'families', 'sanctions'])->find($contract->employee_id);
+
+            return response()->json([
+                'message' => "Dokumen SK PKWT Ke-{$contract->kontrak_ke} berhasil diperbarui.",
+                'sk_path' => $path,
+                'contract' => $contract,
+                'employee' => $employee,
+            ]);
+        } catch (\Exception $e) {
+            \Log::error("Failed uploading contract SK: " . $e->getMessage());
+            return response()->json(['message' => 'Gagal menyimpan berkas SK Kontrak: ' . $e->getMessage()], 500);
+        }
     }
 
     public function deleteContract(int $id): JsonResponse

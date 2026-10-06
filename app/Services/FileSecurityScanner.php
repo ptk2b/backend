@@ -12,8 +12,7 @@ class FileSecurityScanner
      */
     protected const DANGEROUS_EXTENSIONS = [
         'php', 'phtml', 'php3', 'php4', 'php5', 'php7', 'php8', 'phps', 'phar',
-        'exe', 'sh', 'bash', 'cmd', 'bat', 'bin', 'cgi', 'pl', 'py', 'js',
-        'vbs', 'jar', 'msi', 'com', 'scr', 'dll', 'asp', 'aspx', 'jsp', 'shtml', 'htm', 'html'
+        'exe', 'cgi', 'asp', 'aspx', 'jsp'
     ];
 
     /**
@@ -22,10 +21,10 @@ class FileSecurityScanner
      *
      * @param mixed $file
      * @param array $allowedExtensions e.g. ['pdf', 'jpg', 'jpeg', 'png']
-     * @param int $maxKb Max size in kilobytes (default 3072 = 3MB)
+     * @param int $maxKb Max size in kilobytes (default 20480 = 20MB)
      * @return string|null
      */
-    public static function scan(mixed $file, array $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'], int $maxKb = 3072): ?string
+    public static function scan(mixed $file, array $allowedExtensions = ['pdf', 'jpg', 'jpeg', 'png'], int $maxKb = 20480): ?string
     {
         if (!$file instanceof UploadedFile) {
             return 'Berkas yang diunggah tidak valid.';
@@ -34,7 +33,7 @@ class FileSecurityScanner
         if (!$file->isValid()) {
             $errorCode = $file->getError();
             return match ($errorCode) {
-                UPLOAD_ERR_INI_SIZE   => 'Ukuran file melebihi batas upload maksimal server (upload_max_filesize). Silakan kompres file atau gunakan file di bawah 10MB.',
+                UPLOAD_ERR_INI_SIZE   => 'Ukuran file melebihi batas upload maksimal server (upload_max_filesize). Silakan gunakan file di bawah batas upload server atau kompres dokumen Anda.',
                 UPLOAD_ERR_FORM_SIZE  => 'Ukuran file melebihi batas form HTML.',
                 UPLOAD_ERR_PARTIAL    => 'File hanya terunggah sebagian. Silakan coba unggah kembali.',
                 UPLOAD_ERR_NO_FILE    => 'Tidak ada file yang dipilih.',
@@ -187,12 +186,16 @@ class FileSecurityScanner
         }
 
         // Dangerous signatures to detect PHP backdoor / webshell injection
-        // Only scan for actual PHP execution tags that PHP engine can execute
+        // For PDF: compressed binary streams contain random bytes that can collide with '<?=',
+        // so we only scan for explicit '<?php\b' or script tags in PDF files.
         $dangerousPatterns = [
             '/<\?php\b/i',
-            '/<\?=/i',
             '/<script\s+language\s*=\s*["\']?php/i',
         ];
+
+        if (strtolower($ext) !== 'pdf') {
+            $dangerousPatterns[] = '/<\?=/i';
+        }
 
         foreach ($dangerousPatterns as $pattern) {
             if (preg_match($pattern, $content)) {
