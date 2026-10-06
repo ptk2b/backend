@@ -36,6 +36,8 @@ class EmployeeApiController extends Controller
                 UPDATE employees 
                 SET outtoday = DATE_SUB(DATE_ADD(`in`, INTERVAL 6 MONTH), INTERVAL 1 DAY)
                 WHERE status_hubungan_kerja = 'PKWT' 
+                  AND status_karyawan = 'ACTIVE'
+                  AND (outhal IS NULL OR outhal = '' OR outhal = '-')
                   AND `in` IS NOT NULL 
                   AND outtoday IS NOT NULL
                   AND outtoday < DATE_SUB(DATE_ADD(`in`, INTERVAL 6 MONTH), INTERVAL 1 DAY)
@@ -47,6 +49,8 @@ class EmployeeApiController extends Controller
                 SET ch.tanggal_selesai = DATE_SUB(DATE_ADD(ch.tanggal_mulai, INTERVAL 6 MONTH), INTERVAL 1 DAY),
                     ch.masa_kontrak_bulan = 6
                 WHERE e.status_hubungan_kerja = 'PKWT'
+                  AND e.status_karyawan = 'ACTIVE'
+                  AND (e.outhal IS NULL OR e.outhal = '' OR e.outhal = '-')
                   AND ch.tanggal_mulai IS NOT NULL
                   AND ch.tanggal_selesai IS NOT NULL
                   AND ch.tanggal_selesai < DATE_SUB(DATE_ADD(ch.tanggal_mulai, INTERVAL 6 MONTH), INTERVAL 1 DAY)
@@ -54,6 +58,10 @@ class EmployeeApiController extends Controller
         } catch (\Exception $e) {
             try {
                 Employee::where('status_hubungan_kerja', 'PKWT')
+                    ->where('status_karyawan', 'ACTIVE')
+                    ->where(function ($q) {
+                        $q->whereNull('outhal')->orWhere('outhal', '')->orWhere('outhal', '-');
+                    })
                     ->whereNotNull('in')
                     ->whereNotNull('outtoday')
                     ->chunkById(100, function ($employees) {
@@ -482,15 +490,6 @@ class EmployeeApiController extends Controller
     {
         EmployeeSanction::syncExpiredStatus();
         $employee = Employee::with(['contractHistories', 'families', 'sanctions', 'activeSanctions'])->findOrFail($id);
-        if (strtoupper($employee->status_hubungan_kerja ?? '') === 'PKWT' && !empty($employee->in)) {
-            try {
-                $minEnd = Carbon::parse($employee->in)->addMonths(6)->subDay();
-                if (empty($employee->outtoday) || Carbon::parse($employee->outtoday)->lt($minEnd)) {
-                    $employee->outtoday = $minEnd->format('Y-m-d');
-                    $employee->save();
-                }
-            } catch (\Exception $e) {}
-        }
         return response()->json($employee);
     }
 
@@ -568,7 +567,7 @@ class EmployeeApiController extends Controller
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
             'sub_cabang'                    => 'nullable|string|max:150',
             'catatan'                       => 'nullable|string',
-            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 10240)],
+            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
         ]);
 
         if ($validator->fails()) {
@@ -577,18 +576,27 @@ class EmployeeApiController extends Controller
 
         $data = $validator->validated();
 
-        // Enforce PKWT contract end date to at least 6 months if missing or less than 6 months
-        if (($data['status_hubungan_kerja'] ?? '') === 'PKWT' && !empty($data['in'])) {
+        $statusKar = $data['status_karyawan'] ?? 'ACTIVE';
+        $outHal = $data['outhal'] ?? null;
+        $isNonActive = ($statusKar === 'NON ACTIVE') || (!empty($outHal) && trim($outHal) !== '' && trim($outHal) !== '-');
+
+        // Enforce PKWT contract end date to at least 6 months ONLY if outtoday was not filled and employee is ACTIVE
+        if (($data['status_hubungan_kerja'] ?? '') === 'PKWT' && !empty($data['in']) && empty($data['outtoday']) && !$isNonActive) {
             try {
                 $minEnd = Carbon::parse($data['in'])->addMonths(6)->subDay();
-                if (empty($data['outtoday']) || Carbon::parse($data['outtoday'])->lt($minEnd)) {
-                    $data['outtoday'] = $minEnd->format('Y-m-d');
-                }
+                $data['outtoday'] = $minEnd->format('Y-m-d');
             } catch (\Exception $e) {}
         }
 
         if ($request->hasFile('sk_file')) {
-            $data['sk_path'] = $request->file('sk_file')->store('employee-sk', 'public');
+            try {
+                if (!Storage::disk('public')->exists('employee-sk')) {
+                    Storage::disk('public')->makeDirectory('employee-sk');
+                }
+                $data['sk_path'] = $request->file('sk_file')->store('employee-sk', 'public');
+            } catch (\Exception $e) {
+                \Log::error("Failed storing employee SK file: " . $e->getMessage());
+            }
         }
         unset($data['sk_file']);
 
@@ -734,7 +742,7 @@ class EmployeeApiController extends Controller
             'kewarganegaraan_bpjs'          => 'nullable|string|max:50',
             'sub_cabang'                    => 'nullable|string|max:100',
             'catatan'                       => 'nullable|string',
-            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 10240)],
+            'sk_file'                       => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
         ]);
 
         if ($validator->fails()) {
@@ -744,10 +752,17 @@ class EmployeeApiController extends Controller
         $data = $validator->validated();
 
         if ($request->hasFile('sk_file')) {
-            if ($employee->sk_path) {
-                Storage::disk('public')->delete($employee->sk_path);
+            try {
+                if (!Storage::disk('public')->exists('employee-sk')) {
+                    Storage::disk('public')->makeDirectory('employee-sk');
+                }
+                if ($employee->sk_path) {
+                    Storage::disk('public')->delete($employee->sk_path);
+                }
+                $data['sk_path'] = $request->file('sk_file')->store('employee-sk', 'public');
+            } catch (\Exception $e) {
+                \Log::error("Failed updating employee SK file: " . $e->getMessage());
             }
-            $data['sk_path'] = $request->file('sk_file')->store('employee-sk', 'public');
         }
         unset($data['sk_file']);
 
@@ -757,12 +772,15 @@ class EmployeeApiController extends Controller
 
         $statusHub = $data['status_hubungan_kerja'] ?? $employee->status_hubungan_kerja;
         $inVal = $data['in'] ?? $employee->in;
-        if ($statusHub === 'PKWT' && !empty($inVal)) {
+        $statusKar = $data['status_karyawan'] ?? $employee->status_karyawan;
+        $outHal = $data['outhal'] ?? $employee->outhal;
+        $isNonActive = ($statusKar === 'NON ACTIVE') || (!empty($outHal) && trim($outHal) !== '' && trim($outHal) !== '-');
+
+        // Only default outtoday to in + 6 months if outtoday is EMPTY, employee is ACTIVE and PKWT
+        if ($statusHub === 'PKWT' && !empty($inVal) && empty($data['outtoday']) && !$isNonActive) {
             try {
                 $minEnd = Carbon::parse($inVal)->addMonths(6)->subDay();
-                if (empty($data['outtoday']) || Carbon::parse($data['outtoday'])->lt($minEnd)) {
-                    $data['outtoday'] = $minEnd->format('Y-m-d');
-                }
+                $data['outtoday'] = $minEnd->format('Y-m-d');
             } catch (\Exception $e) {}
         }
 
@@ -803,6 +821,26 @@ class EmployeeApiController extends Controller
                         }
                     }
                 }
+            }
+        }
+
+        // If employee is non active / keluar and has outtoday, ensure the latest contract history reflects outtoday
+        if ($isNonActive && !empty($data['outtoday'])) {
+            $latestContract = ContractHistory::where('employee_id', $employee->id)
+                ->orderBy('kontrak_ke', 'desc')
+                ->first();
+            if ($latestContract) {
+                try {
+                    $start = Carbon::parse($latestContract->tanggal_mulai);
+                    $end = Carbon::parse($data['outtoday']);
+                    $diffMonths = max(1, $start->diffInMonths($end));
+                } catch (\Exception $ex) {
+                    $diffMonths = 1;
+                }
+                $latestContract->update([
+                    'tanggal_selesai'    => $data['outtoday'],
+                    'masa_kontrak_bulan' => $diffMonths,
+                ]);
             }
         }
 
@@ -1859,7 +1897,7 @@ class EmployeeApiController extends Controller
             'kontrak_ke'         => 'nullable|integer|min:1',
             'catatan'            => 'nullable|string',
             'diserahkan'         => 'nullable|string|max:50',
-            'sk_file'            => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 10240)],
+            'sk_file'            => ['nullable', 'file', new SecureFile(['pdf', 'jpg', 'jpeg', 'png'], 20480)],
         ]);
 
         if ($validator->fails()) {
@@ -1918,7 +1956,14 @@ class EmployeeApiController extends Controller
         $data['employee_id'] = $employee->id;
 
         if ($request->hasFile('sk_file')) {
-            $data['sk_path'] = $request->file('sk_file')->store('contract-sk', 'public');
+            try {
+                if (!Storage::disk('public')->exists('contract-sk')) {
+                    Storage::disk('public')->makeDirectory('contract-sk');
+                }
+                $data['sk_path'] = $request->file('sk_file')->store('contract-sk', 'public');
+            } catch (\Exception $e) {
+                \Log::error("Failed storing contract SK file: " . $e->getMessage());
+            }
         }
         unset($data['sk_file']);
 

@@ -32,7 +32,16 @@ class FileSecurityScanner
         }
 
         if (!$file->isValid()) {
-            return 'Pengunggahan berkas gagal atau file rusak.';
+            $errorCode = $file->getError();
+            return match ($errorCode) {
+                UPLOAD_ERR_INI_SIZE   => 'Ukuran file melebihi batas upload maksimal server (upload_max_filesize). Silakan kompres file atau gunakan file di bawah 10MB.',
+                UPLOAD_ERR_FORM_SIZE  => 'Ukuran file melebihi batas form HTML.',
+                UPLOAD_ERR_PARTIAL    => 'File hanya terunggah sebagian. Silakan coba unggah kembali.',
+                UPLOAD_ERR_NO_FILE    => 'Tidak ada file yang dipilih.',
+                UPLOAD_ERR_NO_TMP_DIR => 'Server tidak memiliki folder penyimpanan berkas sementara.',
+                UPLOAD_ERR_CANT_WRITE => 'Gagal menulis berkas ke penyimpanan disk server.',
+                default               => 'Pengunggahan berkas gagal (' . ($file->getErrorMessage() ?: "kode $errorCode") . ').',
+            };
         }
 
         // 1. Check File Size
@@ -108,7 +117,11 @@ class FileSecurityScanner
         switch (strtolower($ext)) {
             case 'pdf':
                 // PDF magic bytes: %PDF- (0x25, 0x50, 0x44, 0x46, 0x2D)
-                if (!str_starts_with($header, '%PDF-')) {
+                // In standard PDF specifications (ISO 32000-1), %PDF- header can appear anywhere within the first 1024 bytes
+                $handlePdf = @fopen($path, 'rb');
+                $pdfHeader = $handlePdf ? fread($handlePdf, 1024) : $header;
+                if ($handlePdf) fclose($handlePdf);
+                if (!str_contains($pdfHeader ?: '', '%PDF-')) {
                     return ['valid' => false, 'message' => 'Struktur berkas bukan dokumen PDF yang valid (magic bytes mismatch).'];
                 }
                 break;
@@ -174,13 +187,11 @@ class FileSecurityScanner
         }
 
         // Dangerous signatures to detect PHP backdoor / webshell injection
+        // Only scan for actual PHP execution tags that PHP engine can execute
         $dangerousPatterns = [
-            '/<\?php/i',
+            '/<\?php\b/i',
             '/<\?=/i',
-            '/<script[\s>]/i',
-            '/eval\s*\(/i',
-            '/(?:passthru|shell_exec|system|proc_open|popen)\s*\(/i',
-            '/__halt_compiler\s*\(/i',
+            '/<script\s+language\s*=\s*["\']?php/i',
         ];
 
         foreach ($dangerousPatterns as $pattern) {
