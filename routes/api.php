@@ -16,7 +16,12 @@ use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
 Route::get('/public/rfu-monitoring', [RfuApiController::class, 'publicDashboard']);
+Route::get('/public/rfu/units', [RfuApiController::class, 'adminIndex']);
 Route::match(['post', 'put'], '/public/rfu/locations/{id}', [RfuApiController::class, 'updateLocation'])->whereNumber('id');
+Route::post('/public/rfu/unit', [RfuApiController::class, 'storeUnit']);
+Route::match(['post', 'put'], '/public/rfu/unit/{id}', [RfuApiController::class, 'updateUnit'])->whereNumber('id');
+Route::patch('/public/rfu/unit/{id}/status', [RfuApiController::class, 'markAsRfu'])->whereNumber('id');
+Route::delete('/public/rfu/unit/{id}', [RfuApiController::class, 'deleteUnit'])->whereNumber('id');
 Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
