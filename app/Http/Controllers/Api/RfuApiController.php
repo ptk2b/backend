@@ -30,7 +30,7 @@ class RfuApiController extends Controller
             ? round(($totalRfu / $totalPlan) * 100, 1)
             : 0;
 
-        $now = Carbon::now();
+        $now = Carbon::now('Asia/Makassar');
 
         return response()->json([
             'report_time' => $now->format('H:i'),
