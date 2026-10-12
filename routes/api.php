@@ -16,6 +16,7 @@ use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
 Route::get('/public/rfu-monitoring', [RfuApiController::class, 'publicDashboard']);
+Route::match(['post', 'put'], '/public/rfu/locations/{id}', [RfuApiController::class, 'updateLocation'])->whereNumber('id');
 Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
