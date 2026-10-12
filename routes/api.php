@@ -11,9 +11,11 @@ use App\Http\Controllers\Api\AttendanceApiController;
 use App\Http\Controllers\Api\FingerprintAttendanceController;
 use App\Http\Controllers\Api\UserApiController;
 use App\Http\Controllers\Api\SimperPhotoController;
+use App\Http\Controllers\Api\RfuApiController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
+Route::get('/public/rfu-monitoring', [RfuApiController::class, 'publicDashboard']);
 Route::get('/content/{section?}', [SiteContentApiController::class, 'show']);
 Route::get('/memos', [MemoApiController::class, 'index']);
 Route::get('/memos/{id}/download', [MemoApiController::class, 'download']);
@@ -82,6 +84,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/attendance/update', [AttendanceApiController::class, 'update']);
         Route::post('/admin/attendance/seed-initial', [AttendanceApiController::class, 'seedInitial']);
 
+        // Monitoring & Pengelolaan RFU Unit (Admin & HRD)
+        Route::get('/admin/rfu', [RfuApiController::class, 'adminIndex']);
+        Route::post('/admin/rfu/unit', [RfuApiController::class, 'storeUnit']);
+        Route::match(['post', 'put'], '/admin/rfu/unit/{id}', [RfuApiController::class, 'updateUnit'])->whereNumber('id');
+        Route::patch('/admin/rfu/unit/{id}/status', [RfuApiController::class, 'markAsRfu'])->whereNumber('id');
+        Route::delete('/admin/rfu/unit/{id}', [RfuApiController::class, 'deleteUnit'])->whereNumber('id');
+        Route::put('/admin/rfu/locations/{id}', [RfuApiController::class, 'updateLocation'])->whereNumber('id');
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====
