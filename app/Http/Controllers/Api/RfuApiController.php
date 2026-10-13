@@ -102,7 +102,9 @@ class RfuApiController extends Controller
                 'total_plan' => $totalPlan,
                 'total_on_progress' => $totalActive,
             ]
-        ]);
+        ])
+        ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        ->header('Pragma', 'no-cache');
     }
 
     /**
@@ -252,49 +254,66 @@ class RfuApiController extends Controller
             $locationsData = $request->all();
         }
 
-        $updated = [];
-        foreach ($locationsData as $key => $item) {
-            if (!is_array($item)) continue;
+        \Illuminate\Support\Facades\DB::transaction(function () use ($locationsData) {
+            foreach ($locationsData as $key => $item) {
+                if (!is_array($item)) continue;
 
-            $locId = $item['id'] ?? (is_numeric($key) ? $key : null);
-            $locCode = $item['code'] ?? (!is_numeric($key) ? $key : null);
+                $locId = $item['id'] ?? (is_numeric($key) ? $key : null);
+                $locCode = $item['code'] ?? (!is_numeric($key) ? $key : null);
 
-            $location = null;
-            if ($locId && is_numeric($locId) && (int)$locId > 0) {
-                $location = RfuLocation::find((int)$locId);
-            }
-            if (!$location && $locCode) {
-                $location = RfuLocation::where('code', $locCode)->first();
-            }
-            if (!$location && isset($item['name'])) {
-                $location = RfuLocation::where('name', $item['name'])->first();
-            }
-            if (!$location && is_numeric($key) && (int)$key >= 1 && (int)$key <= 4) {
-                $location = RfuLocation::where('sort_order', (int)$key)->first();
-            }
+                $location = null;
+                if ($locId && is_numeric($locId) && (int)$locId > 0) {
+                    $location = RfuLocation::find((int)$locId);
+                }
+                if (!$location && $locCode) {
+                    $location = RfuLocation::where('code', $locCode)->first();
+                }
+                if (!$location && isset($item['name'])) {
+                    $location = RfuLocation::where('name', $item['name'])->first();
+                }
+                if (!$location && is_numeric($key) && (int)$key >= 1 && (int)$key <= 4) {
+                    $location = RfuLocation::where('sort_order', (int)$key)->first();
+                }
 
-            if ($location) {
-                $updateData = [];
-                if (isset($item['rfu_count'])) {
-                    $updateData['rfu_count'] = max(0, (int)$item['rfu_count']);
-                }
-                if (isset($item['plan_count'])) {
-                    $updateData['plan_count'] = max(0, (int)$item['plan_count']);
-                }
-                if (isset($item['on_progress_count'])) {
-                    $updateData['on_progress_count'] = max(0, (int)$item['on_progress_count']);
-                }
-                if (!empty($updateData)) {
-                    $location->update($updateData);
-                    $updated[] = $location->fresh();
+                if ($location) {
+                    $updateData = [];
+                    if (array_key_exists('rfu_count', $item)) {
+                        $updateData['rfu_count'] = max(0, (int)$item['rfu_count']);
+                    }
+                    if (array_key_exists('plan_count', $item)) {
+                        $updateData['plan_count'] = max(0, (int)$item['plan_count']);
+                    }
+                    if (array_key_exists('on_progress_count', $item)) {
+                        $updateData['on_progress_count'] = max(0, (int)$item['on_progress_count']);
+                    }
+                    if (!empty($updateData)) {
+                        $location->update($updateData);
+                    }
                 }
             }
-        }
+        });
+
+        $allLocations = RfuLocation::withCount(['activeUnits'])
+            ->orderBy('sort_order', 'asc')
+            ->get()
+            ->map(function ($loc) {
+                return [
+                    'id' => $loc->id,
+                    'name' => $loc->name,
+                    'code' => $loc->code,
+                    'rfu_count' => (int)$loc->rfu_count,
+                    'plan_count' => (int)$loc->plan_count,
+                    'on_progress_count' => (int)($loc->active_units_count ?? $loc->on_progress_count ?? 0),
+                    'active_units_count' => (int)($loc->active_units_count ?? 0),
+                ];
+            });
 
         return response()->json([
             'message' => 'Data target lokasi berhasil diperbarui.',
-            'locations' => $updated,
-        ]);
+            'locations' => $allLocations,
+        ])
+        ->header('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0')
+        ->header('Pragma', 'no-cache');
     }
 
     /**
