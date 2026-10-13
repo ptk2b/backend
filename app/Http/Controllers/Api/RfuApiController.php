@@ -12,10 +12,30 @@ use Illuminate\Http\Request;
 class RfuApiController extends Controller
 {
     /**
+     * Ensure default 4 locations exist (self-healing for fresh/unseeded databases)
+     */
+    private function ensureDefaultLocationsExist(): void
+    {
+        if (RfuLocation::count() === 0) {
+            $defaultLocations = [
+                ['name' => 'Petrosea', 'code' => 'petrosea', 'rfu_count' => 45, 'plan_count' => 60, 'sort_order' => 1],
+                ['name' => 'Pama', 'code' => 'pama', 'rfu_count' => 14, 'plan_count' => 12, 'sort_order' => 2],
+                ['name' => 'SIMS', 'code' => 'sims', 'rfu_count' => 5, 'plan_count' => 12, 'sort_order' => 3],
+                ['name' => 'S. Paku', 'code' => 'spaku', 'rfu_count' => 10, 'plan_count' => 10, 'sort_order' => 4],
+            ];
+            foreach ($defaultLocations as $loc) {
+                RfuLocation::firstOrCreate(['code' => $loc['code']], $loc);
+            }
+        }
+    }
+
+    /**
      * Public endpoint untuk halaman Owner (tanpa login)
      */
     public function publicDashboard(Request $request): JsonResponse
     {
+        $this->ensureDefaultLocationsExist();
+
         $locations = RfuLocation::with(['activeUnits'])
             ->orderBy('sort_order', 'asc')
             ->get();
@@ -47,9 +67,10 @@ class RfuApiController extends Controller
                     'id' => $loc->id,
                     'name' => $loc->name,
                     'code' => $loc->code,
-                    'rfu_count' => $loc->rfu_count,
-                    'plan_count' => $loc->plan_count,
+                    'rfu_count' => (int)$loc->rfu_count,
+                    'plan_count' => (int)$loc->plan_count,
                     'on_progress_count' => $loc->activeUnits->count(),
+                    'active_units_count' => $loc->activeUnits->count(),
                     'units' => $loc->activeUnits,
                 ];
             }),
@@ -63,11 +84,25 @@ class RfuApiController extends Controller
      */
     public function adminIndex(Request $request): JsonResponse
     {
+        $this->ensureDefaultLocationsExist();
+
         $status = $request->query('status', 'ON_PROGRESS');
         $locationId = $request->query('location_id');
         $search = $request->query('search');
 
-        $locations = RfuLocation::withCount(['activeUnits'])->orderBy('sort_order', 'asc')->get();
+        $locations = RfuLocation::withCount(['activeUnits'])->orderBy('sort_order', 'asc')->get()
+            ->map(function ($loc) {
+                return [
+                    'id' => $loc->id,
+                    'name' => $loc->name,
+                    'code' => $loc->code,
+                    'rfu_count' => (int)$loc->rfu_count,
+                    'plan_count' => (int)$loc->plan_count,
+                    'on_progress_count' => (int)$loc->active_units_count,
+                    'active_units_count' => (int)$loc->active_units_count,
+                    'sort_order' => $loc->sort_order,
+                ];
+            });
 
         $query = RfuUnitRecord::with('location')->orderBy('id', 'desc');
 
@@ -249,6 +284,8 @@ class RfuApiController extends Controller
      */
     public function updateLocationsBatch(Request $request): JsonResponse
     {
+        $this->ensureDefaultLocationsExist();
+
         $locationsData = $request->input('locations');
         if (!is_array($locationsData)) {
             $locationsData = $request->all();
@@ -321,6 +358,8 @@ class RfuApiController extends Controller
      */
     public function updateLocation(Request $request, mixed $id): JsonResponse
     {
+        $this->ensureDefaultLocationsExist();
+
         $location = null;
         if (is_numeric($id) && (int)$id > 0) {
             $location = RfuLocation::find((int)$id);
