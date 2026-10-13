@@ -183,6 +183,25 @@ class RfuApiController extends Controller
 
         $units = $query->paginate($request->query('per_page', 50));
 
+        $dtNumbers = collect($units->items())->pluck('dt_number')->unique()->filter()->values();
+        $workshopMap = collect();
+        try {
+            if (Schema::hasTable('unit_workshops') && $dtNumbers->isNotEmpty()) {
+                $workshopMap = UnitWorkshop::whereIn('no_unit', $dtNumbers)->get()->keyBy('no_unit');
+            }
+        } catch (\Throwable $e) {}
+
+        if ($workshopMap->isNotEmpty()) {
+            foreach ($units->items() as $u) {
+                $w = $workshopMap->get($u->dt_number);
+                if ($w) {
+                    $u->severity = $w->severity;
+                    $u->merk = $w->merk;
+                    $u->type = $w->type;
+                }
+            }
+        }
+
         $totalRfu = $locations->sum('rfu_count');
         $totalPlan = $locations->sum('plan_count');
         $totalActive = RfuUnitRecord::where('status', 'ON_PROGRESS')->count();
