@@ -17,7 +17,8 @@ use Illuminate\Support\Facades\Route;
 // ===== PUBLIC ROUTES =====
 Route::get('/public/rfu-monitoring', [RfuApiController::class, 'publicDashboard']);
 Route::get('/public/rfu/units', [RfuApiController::class, 'adminIndex']);
-Route::match(['post', 'put'], '/public/rfu/locations/{id}', [RfuApiController::class, 'updateLocation'])->whereNumber('id');
+Route::match(['post', 'put'], '/public/rfu/locations/batch', [RfuApiController::class, 'updateLocationsBatch']);
+Route::match(['post', 'put'], '/public/rfu/locations/{id}', [RfuApiController::class, 'updateLocation']);
 Route::post('/public/rfu/unit', [RfuApiController::class, 'storeUnit']);
 Route::match(['post', 'put'], '/public/rfu/unit/{id}', [RfuApiController::class, 'updateUnit'])->whereNumber('id');
 Route::patch('/public/rfu/unit/{id}/status', [RfuApiController::class, 'markAsRfu'])->whereNumber('id');
@@ -96,7 +97,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::match(['post', 'put'], '/admin/rfu/unit/{id}', [RfuApiController::class, 'updateUnit'])->whereNumber('id');
         Route::patch('/admin/rfu/unit/{id}/status', [RfuApiController::class, 'markAsRfu'])->whereNumber('id');
         Route::delete('/admin/rfu/unit/{id}', [RfuApiController::class, 'deleteUnit'])->whereNumber('id');
-        Route::put('/admin/rfu/locations/{id}', [RfuApiController::class, 'updateLocation'])->whereNumber('id');
+        Route::match(['post', 'put'], '/admin/rfu/locations/batch', [RfuApiController::class, 'updateLocationsBatch']);
+        Route::match(['post', 'put'], '/admin/rfu/locations/{id}', [RfuApiController::class, 'updateLocation']);
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====

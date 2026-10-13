@@ -241,11 +241,81 @@ class RfuApiController extends Controller
     }
 
     /**
+     * Update Target / Counter Lokasi secara Batch (Semua Lokasi sekaligus)
+     */
+    public function updateLocationsBatch(Request $request): JsonResponse
+    {
+        $locationsData = $request->input('locations');
+        if (!is_array($locationsData)) {
+            $locationsData = $request->all();
+        }
+
+        $updated = [];
+        foreach ($locationsData as $key => $item) {
+            if (!is_array($item)) continue;
+
+            $locId = $item['id'] ?? (is_numeric($key) ? $key : null);
+            $locCode = $item['code'] ?? (!is_numeric($key) ? $key : null);
+
+            $location = null;
+            if ($locId && is_numeric($locId) && (int)$locId > 0) {
+                $location = RfuLocation::find((int)$locId);
+            }
+            if (!$location && $locCode) {
+                $location = RfuLocation::where('code', $locCode)->first();
+            }
+            if (!$location && isset($item['name'])) {
+                $location = RfuLocation::where('name', $item['name'])->first();
+            }
+            if (!$location && is_numeric($key) && (int)$key >= 1 && (int)$key <= 4) {
+                $location = RfuLocation::where('sort_order', (int)$key)->first();
+            }
+
+            if ($location) {
+                $updateData = [];
+                if (isset($item['rfu_count'])) {
+                    $updateData['rfu_count'] = max(0, (int)$item['rfu_count']);
+                }
+                if (isset($item['plan_count'])) {
+                    $updateData['plan_count'] = max(0, (int)$item['plan_count']);
+                }
+                if (isset($item['on_progress_count'])) {
+                    $updateData['on_progress_count'] = max(0, (int)$item['on_progress_count']);
+                }
+                if (!empty($updateData)) {
+                    $location->update($updateData);
+                    $updated[] = $location->fresh();
+                }
+            }
+        }
+
+        return response()->json([
+            'message' => 'Data target lokasi berhasil diperbarui.',
+            'locations' => $updated,
+        ]);
+    }
+
+    /**
      * Admin: Update Target / Counter Lokasi (RFU & Plan)
      */
-    public function updateLocation(Request $request, int $id): JsonResponse
+    public function updateLocation(Request $request, mixed $id): JsonResponse
     {
-        $location = RfuLocation::findOrFail($id);
+        $location = null;
+        if (is_numeric($id) && (int)$id > 0) {
+            $location = RfuLocation::find((int)$id);
+        }
+        if (!$location) {
+            $location = RfuLocation::where('code', $id)->orWhere('name', $id)->first();
+        }
+        if (!$location && is_numeric($id) && (int)$id >= 1 && (int)$id <= 4) {
+            $location = RfuLocation::where('sort_order', (int)$id)->first();
+        }
+
+        if (!$location) {
+            return response()->json([
+                'message' => "Lokasi dengan ID/kode '{$id}' tidak ditemukan.",
+            ], 404);
+        }
 
         $validated = $request->validate([
             'rfu_count' => 'required|integer|min:0',
