@@ -109,6 +109,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // User Management & Password Reset
         Route::get('/admin/users', [UserApiController::class, 'index']);
         Route::post('/admin/users', [UserApiController::class, 'store']);
+        Route::put('/admin/users/{id}', [UserApiController::class, 'update'])->whereNumber('id');
         Route::put('/admin/users/{id}/reset-password', [UserApiController::class, 'resetPassword'])->whereNumber('id');
         Route::delete('/admin/users/{id}', [UserApiController::class, 'destroy'])->whereNumber('id');
 

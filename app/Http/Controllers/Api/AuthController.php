@@ -34,10 +34,11 @@ class AuthController extends Controller
         return response()->json([
             'token' => $token,
             'user'  => [
-                'id'       => $user->id,
-                'name'     => $user->name,
-                'username' => $user->username,
-                'role'     => $user->role ?? 'admin',
+                'id'          => $user->id,
+                'name'        => $user->name,
+                'username'    => $user->username,
+                'role'        => $user->role ?? 'admin',
+                'permissions' => $user->permissions ?? null,
             ],
         ]);
     }
@@ -54,10 +55,11 @@ class AuthController extends Controller
         $user = $request->user();
 
         return response()->json([
-            'id'       => $user->id,
-            'name'     => $user->name,
-            'username' => $user->username,
-            'role'     => $user->role ?? 'admin',
+            'id'          => $user->id,
+            'name'        => $user->name,
+            'username'    => $user->username,
+            'role'        => $user->role ?? 'admin',
+            'permissions' => $user->permissions ?? null,
         ]);
     }
 }
