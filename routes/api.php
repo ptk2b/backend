@@ -12,6 +12,7 @@ use App\Http\Controllers\Api\FingerprintAttendanceController;
 use App\Http\Controllers\Api\UserApiController;
 use App\Http\Controllers\Api\SimperPhotoController;
 use App\Http\Controllers\Api\RfuApiController;
+use App\Http\Controllers\Api\UnitWorkshopApiController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -99,6 +100,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('/admin/rfu/unit/{id}', [RfuApiController::class, 'deleteUnit'])->whereNumber('id');
         Route::match(['post', 'put'], '/admin/rfu/locations/batch', [RfuApiController::class, 'updateLocationsBatch']);
         Route::match(['post', 'put'], '/admin/rfu/locations/{id}', [RfuApiController::class, 'updateLocation']);
+
+        // Data Unit Workshop (impor Excel/CSV, tanpa hapus)
+        Route::get('/admin/rfu/data-unit', [UnitWorkshopApiController::class, 'index']);
+        Route::post('/admin/rfu/data-unit/import', [UnitWorkshopApiController::class, 'import']);
+        Route::post('/admin/rfu/data-unit/sync', [UnitWorkshopApiController::class, 'syncToRfuRecords']);
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====

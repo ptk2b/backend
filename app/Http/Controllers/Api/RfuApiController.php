@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\RfuLocation;
 use App\Models\RfuUnitRecord;
+use App\Models\UnitWorkshop;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class RfuApiController extends Controller
 {
@@ -30,15 +32,41 @@ class RfuApiController extends Controller
     }
 
     /**
+     * Timpa rfu_count & plan_count dengan hitungan otomatis dari data unit workshop
+     * (hanya untuk area yang sudah punya data impor; area lain tetap angka manual).
+     */
+    private function applyWorkshopCounts($locations)
+    {
+        try {
+            if (!Schema::hasTable('unit_workshops')) {
+                return $locations;
+            }
+            $summary = UnitWorkshop::areaSummary();
+            foreach ($locations as $loc) {
+                $s = $summary[$loc->code] ?? null;
+                if ($s && $s['total'] > 0) {
+                    $loc->rfu_count = $s['rfu'];
+                    $loc->plan_count = $s['total'];
+                }
+            }
+        } catch (\Throwable $e) {
+            // Graceful fallback if table not yet migrated
+        }
+        return $locations;
+    }
+
+    /**
      * Public endpoint untuk halaman Owner (tanpa login)
      */
     public function publicDashboard(Request $request): JsonResponse
     {
         $this->ensureDefaultLocationsExist();
 
-        $locations = RfuLocation::with(['activeUnits'])
-            ->orderBy('sort_order', 'asc')
-            ->get();
+        $locations = $this->applyWorkshopCounts(
+            RfuLocation::with(['activeUnits'])
+                ->orderBy('sort_order', 'asc')
+                ->get()
+        );
 
         $totalRfu = $locations->sum('rfu_count');
         $totalPlan = $locations->sum('plan_count');
@@ -52,6 +80,19 @@ class RfuApiController extends Controller
 
         $now = Carbon::now('Asia/Makassar');
 
+        $dtNumbers = $locations->flatMap(function ($loc) {
+            return $loc->activeUnits->pluck('dt_number');
+        })->unique()->filter()->values();
+        
+        $workshopMap = collect();
+        try {
+            if (Schema::hasTable('unit_workshops') && $dtNumbers->isNotEmpty()) {
+                $workshopMap = UnitWorkshop::whereIn('no_unit', $dtNumbers)->get()->keyBy('no_unit');
+            }
+        } catch (\Throwable $e) {
+            // Graceful fallback if table not yet migrated
+        }
+
         return response()->json([
             'report_time' => $now->format('H:i'),
             'report_date' => $now->translatedFormat('d F Y'),
@@ -62,7 +103,7 @@ class RfuApiController extends Controller
                 'total_on_progress' => $totalOnProgress,
                 'readiness_percentage' => $readinessPercentage,
             ],
-            'locations' => $locations->map(function ($loc) {
+            'locations' => $locations->map(function ($loc) use ($workshopMap) {
                 return [
                     'id' => $loc->id,
                     'name' => $loc->name,
@@ -71,7 +112,22 @@ class RfuApiController extends Controller
                     'plan_count' => (int)$loc->plan_count,
                     'on_progress_count' => $loc->activeUnits->count(),
                     'active_units_count' => $loc->activeUnits->count(),
-                    'units' => $loc->activeUnits,
+                    'units' => $loc->activeUnits->map(function ($u) use ($workshopMap) {
+                        $w = $workshopMap->get($u->dt_number);
+                        $arr = $u->toArray();
+                        $arr['merk'] = $w?->merk;
+                        $arr['type'] = $w?->type;
+                        $arr['chassis_no'] = $w?->chassis_no;
+                        $arr['engine_no'] = $w?->engine_no;
+                        $arr['job'] = $w?->job;
+                        $arr['tahun'] = $w?->tahun;
+                        $arr['severity'] = $w?->severity;
+                        $arr['keterangan'] = $w?->keterangan;
+                        $arr['waiting_part'] = $w?->waiting_part;
+                        $arr['job_location'] = $w?->job_location ?: $u->position;
+                        $arr['ready'] = $w?->ready;
+                        return $arr;
+                    }),
                 ];
             }),
         ])
@@ -90,7 +146,9 @@ class RfuApiController extends Controller
         $locationId = $request->query('location_id');
         $search = $request->query('search');
 
-        $locations = RfuLocation::withCount(['activeUnits'])->orderBy('sort_order', 'asc')->get()
+        $locations = $this->applyWorkshopCounts(
+            RfuLocation::withCount(['activeUnits'])->orderBy('sort_order', 'asc')->get()
+        )
             ->map(function ($loc) {
                 return [
                     'id' => $loc->id,
