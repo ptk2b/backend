@@ -22,6 +22,7 @@ class AdminIzinLapanganController extends Controller
             'alasan' => $p->alasan,
             'status' => $p->status,
             'catatan' => $p->catatan,
+            'current_step' => $p->current_step ?? 'tahap_1',
             'lampiran' => $p->lampiran_path ? url('api/public/izin/requests/' . $p->id . '/lampiran') : null,
             'has_lampiran' => !empty($p->lampiran_path),
             'diajukan' => $p->created_at?->toIso8601String(),
@@ -40,6 +41,20 @@ class AdminIzinLapanganController extends Controller
                 'jabatan' => $p->supervisor->jabatan,
                 'departemen' => $p->supervisor->departemen,
             ] : null,
+            'step_1' => [
+                'by_nama' => $p->step1By?->nama_lengkap,
+                'by_jabatan' => $p->step1By?->jabatan,
+                'at' => $p->step_1_at?->toIso8601String(),
+                'status' => $p->step_1_status,
+                'catatan' => $p->step_1_catatan,
+            ],
+            'step_2' => [
+                'by_nama' => $p->step2By?->nama_lengkap,
+                'by_jabatan' => $p->step2By?->jabatan,
+                'at' => $p->step_2_at?->toIso8601String(),
+                'status' => $p->step_2_status,
+                'catatan' => $p->step_2_catatan,
+            ],
             'diputuskan_oleh' => $p->decider?->nama_lengkap,
         ];
     }
@@ -80,12 +95,19 @@ class AdminIzinLapanganController extends Controller
                   ->orWhere('jabatan', 'like', '%MANAGER%');
             })
             ->orderBy('nama_lengkap')
-            ->get(['id', 'nama_lengkap as nama', 'departemen', 'dilokasi']);
+            ->get(['id', 'nama_lengkap as nama', 'departemen', 'jabatan', 'dilokasi']);
+
+        // Jika belum ada karyawan dengan jabatan pengawas khusus, gunakan seluruh karyawan aktif sebagai opsi pengawas
+        if ($supervisors->isEmpty()) {
+            $supervisors = Employee::where('status_karyawan', 'ACTIVE')
+                ->orderBy('nama_lengkap')
+                ->get(['id', 'nama_lengkap as nama', 'departemen', 'jabatan', 'dilokasi']);
+        }
 
         // Daftar karyawan aktif untuk bantuan input admin
         $employees = Employee::where('status_karyawan', 'ACTIVE')
             ->orderBy('nama_lengkap')
-            ->get(['id', 'nama_lengkap as nama', 'nip', 'nik', 'jabatan', 'departemen']);
+            ->get(['id', 'nama_lengkap as nama', 'nip', 'nik', 'jabatan', 'departemen', 'bendera']);
 
         return response()->json([
             'year' => $year,

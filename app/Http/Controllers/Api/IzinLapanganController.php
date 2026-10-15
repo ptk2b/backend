@@ -22,16 +22,76 @@ class IzinLapanganController extends Controller
     private const KUOTA_CUTI = 18;
     private const MAKS_CUTI_SEKALI = 6;
     private const TOKEN_HARI = 14;
-    private const RE_PENGAWAS = '/\bOFFICER\b|\bLEADER\b|\bKOORDINATOR\b|PENANGGUNG\s+JAWAB|SUPERINTENDENT|FOREMAN|SUPERVISOR/i';
 
-    private function norm(?string $s): string
+    /**
+     * Jenjang Level Jabatan Persetujuan:
+     * Level 0 = Crew/Bawahan (Driver, Mekanik, Operator, Helper, dll.)
+     * Level 1 = Foreman, Leader, Kordinator, Supervisor
+     * Level 2 = Superintendent, Penanggung Jawab, Kabag
+     * Level 3 = Deputy
+     * Level 4 = PJO
+     */
+    public static function getJobLevel(?string $jabatan): int
     {
-        return Str::lower(trim(preg_replace('/\s+/', ' ', (string) $s)));
+        $j = Str::upper((string) $jabatan);
+        if (preg_match('/\bPJO\b/i', $j)) {
+            return 4;
+        }
+        if (preg_match('/\bDEPUTY\b/i', $j)) {
+            return 3;
+        }
+        if (preg_match('/SUPERINTENDENT|PENANGGUNG\s*JAWAB|KABAG|\bKAPRO\b|\bMANAGER\b/i', $j)) {
+            return 2;
+        }
+        if (preg_match('/FOREMAN|SUPERVISOR|\bLEADER\b|KORDINATOR|KOORDINATOR/i', $j)) {
+            return 1;
+        }
+        return 0; // Crew / Staf biasa
     }
 
+    /**
+     * Cek apakah user berhak meng-ACC (Level 1 ke atas)
+     */
     private function isPengawas(Employee $e): bool
     {
-        return (bool) preg_match(self::RE_PENGAWAS, (string) $e->jabatan);
+        return self::getJobLevel($e->jabatan) >= 1;
+    }
+
+    /**
+     * Ekstrak kode area/site dari nama jabatan (misal "- SMC", "- OB", "- CH", "- SMD")
+     */
+    public static function extractAreaTag(?string $jabatan): ?string
+    {
+        if (preg_match('/-\s*([A-Z0-9\/]+)$/i', trim((string) $jabatan), $m)) {
+            return Str::upper(trim($m[1]));
+        }
+        return null;
+    }
+
+    /**
+     * Cek apakah seorang pengawas cocok dengan pemohon berdasarkan Departemen dan Area
+     */
+    public static function isMatchDeptAndArea(Employee $supervisor, Employee $karyawan): bool
+    {
+        // 1. Departemen wajib sama (kecuali Deputy / PJO yang mencakup seluruh departemen site)
+        $supLevel = self::getJobLevel($supervisor->jabatan);
+        if ($supLevel < 3) {
+            $supDept = Str::lower(trim((string) $supervisor->departemen));
+            $empDept = Str::lower(trim((string) $karyawan->departemen));
+            if ($supDept !== $empDept) {
+                return false;
+            }
+        }
+
+        // 2. Jika pengawas memiliki kode area spesifik di jabatannya, harus cocok dengan kode area karyawan
+        $supArea = self::extractAreaTag($supervisor->jabatan);
+        $empArea = self::extractAreaTag($karyawan->jabatan);
+
+        if ($supArea && $empArea && $supArea !== $empArea) {
+            return false;
+        }
+
+        return true;
     }
 
     private function aktif()
@@ -68,6 +128,8 @@ class IzinLapanganController extends Controller
             'jabatan' => $e->jabatan,
             'departemen' => $e->departemen,
             'pengawas' => $this->isPengawas($e),
+            'job_level' => self::getJobLevel($e->jabatan),
+            'area_tag' => self::extractAreaTag($e->jabatan),
             'dilokasi' => (bool) $e->dilokasi,
         ];
     }
@@ -83,6 +145,7 @@ class IzinLapanganController extends Controller
             'alasan' => $p->alasan,
             'status' => $p->status,
             'catatan' => $p->catatan,
+            'current_step' => $p->current_step ?? 'tahap_1',
             'lampiran' => $p->lampiran_path ? url('api/public/izin/requests/' . $p->id . '/lampiran') : null,
             'diajukan' => $p->created_at?->toIso8601String(),
             'diputuskan' => $p->decided_at?->toIso8601String(),
@@ -91,10 +154,26 @@ class IzinLapanganController extends Controller
                 'nip' => $p->employee->nip,
                 'jabatan' => $p->employee->jabatan,
                 'departemen' => $p->employee->departemen,
+                'job_level' => self::getJobLevel($p->employee->jabatan),
             ] : null,
             'pengawas' => $p->supervisor?->nama_lengkap,
             'pengawas_id' => $p->supervisor_id,
             'diputuskan_oleh' => $p->decider?->nama_lengkap,
+            // Multi-tier tracking details
+            'step_1' => [
+                'by_nama' => $p->step1By?->nama_lengkap,
+                'by_jabatan' => $p->step1By?->jabatan,
+                'at' => $p->step_1_at?->toIso8601String(),
+                'status' => $p->step_1_status,
+                'catatan' => $p->step_1_catatan,
+            ],
+            'step_2' => [
+                'by_nama' => $p->step2By?->nama_lengkap,
+                'by_jabatan' => $p->step2By?->jabatan,
+                'at' => $p->step_2_at?->toIso8601String(),
+                'status' => $p->step_2_status,
+                'catatan' => $p->step_2_catatan,
+            ],
         ];
     }
 
@@ -149,21 +228,73 @@ class IzinLapanganController extends Controller
             return response('', 304)->header('ETag', '"' . $etag . '"');
         }
 
-        $pengawas = $this->aktif()->where('departemen', $me->departemen)->where('id', '!=', $me->id)->get()
-            ->filter(fn ($e) => $this->isPengawas($e))
+        $myLevel = self::getJobLevel($me->jabatan);
+
+        // Cari daftar pengawas yang levelnya di atas saya dan cocok Departemen & Area
+        $pengawas = $this->aktif()->where('id', '!=', $me->id)->get()
+            ->filter(function ($e) use ($me, $myLevel) {
+                $eLevel = self::getJobLevel($e->jabatan);
+                // Pengawas yang dipilih harus berlevel di atas pemohon
+                if ($eLevel <= $myLevel) {
+                    return false;
+                }
+                // Jika pemohon level 0 (crew), pengawas target utamanya adalah Level 1 (Foreman/Supervisor)
+                if ($myLevel === 0 && $eLevel > 2) {
+                    return false; // Jangan langsung loncat ke Deputy/PJO jika masih ada level 1 & 2
+                }
+                return self::isMatchDeptAndArea($e, $me);
+            })
             ->sortByDesc(fn ($e) => (int) $e->dilokasi)->values()
             ->map(fn ($e) => $this->userArr($e));
 
         $own = IzinRequest::where('employee_id', $me->id)
             ->latest()->limit(50)->get()->map(fn ($p) => $this->reqArr($p));
 
-        $out = ['user' => $this->userArr($me), 'pengawas' => $pengawas, 'riwayat' => $own, 'sisa_cuti' => $this->sisaCuti($me)];
+        $out = [
+            'user' => $this->userArr($me),
+            'pengawas' => $pengawas,
+            'riwayat' => $own,
+            'sisa_cuti' => $this->sisaCuti($me),
+        ];
 
+        // Jika user adalah Pengawas/Pejabat Approval (Level 1 ke atas)
         if ($isPengawas) {
-            $q = IzinRequest::where('supervisor_id', $me->id);
-            $out['menunggu'] = (clone $q)->where('status', 'menunggu')->oldest()->get()->map(fn ($p) => $this->reqArr($p));
-            $out['keputusan'] = (clone $q)->whereIn('status', ['disetujui', 'ditolak'])
-                ->latest('decided_at')->limit(50)->get()->map(fn ($p) => $this->reqArr($p));
+            // Antrean Menunggu:
+            // 1. Pengawas Tingkat 1 (Foreman/Supervisor): Permintaan di tahap_1 yang ditujukan kepadanya
+            // 2. Pejabat Tingkat 2 (Superintendent/Kabag/Deputy): Permintaan di tahap_2 (sudah lolos tahap_1) yang cocok departemen/areanya
+            $qMenunggu = IzinRequest::where(function ($q) use ($me, $myLevel) {
+                if ($myLevel === 1) {
+                    // Level 1 meng-ACC tahap 1
+                    $q->where('supervisor_id', $me->id)
+                      ->where('current_step', 'tahap_1')
+                      ->where('status', 'menunggu');
+                } elseif ($myLevel >= 2) {
+                    // Level 2+ meng-ACC tahap 2 setelah lolos tahap 1
+                    $q->where('current_step', 'tahap_2')
+                      ->where('status', 'menunggu')
+                      ->whereHas('employee', function ($eq) use ($me) {
+                          if (self::getJobLevel($me->jabatan) < 3) {
+                              $eq->where('departemen', $me->departemen);
+                          }
+                      });
+                    
+                    // Atau jika dia ditunjuk langsung sebagai supervisor_id di tahap 1 (bila pemohon adalah Foreman)
+                    $q->orWhere(function ($sub) use ($me) {
+                        $sub->where('supervisor_id', $me->id)
+                            ->where('current_step', 'tahap_1')
+                            ->where('status', 'menunggu');
+                    });
+                }
+            });
+
+            $out['menunggu'] = $qMenunggu->oldest()->get()->filter(function ($p) use ($me) {
+                return self::isMatchDeptAndArea($me, $p->employee);
+            })->values()->map(fn ($p) => $this->reqArr($p));
+
+            // Riwayat keputusan yang pernah dia putuskan
+            $out['keputusan'] = IzinRequest::where(function ($q) use ($me) {
+                $q->where('step_1_by', $me->id)->orWhere('step_2_by', $me->id)->orWhere('decided_by', $me->id);
+            })->latest('updated_at')->limit(50)->get()->map(fn ($p) => $this->reqArr($p));
         }
         return response()->json($out)->header('ETag', '"' . $etag . '"');
     }
@@ -245,22 +376,119 @@ class IzinLapanganController extends Controller
         }
         $d = $r->validate(['status' => 'required|in:disetujui,ditolak,menunggu', 'catatan' => 'nullable|string|max:120']);
         $p = IzinRequest::findOrFail($id);
-        if ($p->supervisor_id !== $me->id) {
-            return response()->json(['message' => 'Pengajuan ini bukan untuk Anda.'], 403);
-        }
-        // 'menunggu' = urungkan keputusan; selain itu hanya dari status menunggu.
-        if ($d['status'] === 'menunggu') {
-            if (!in_array($p->status, ['disetujui', 'ditolak'], true)) {
-                return response()->json(['message' => 'Tidak ada keputusan yang bisa diurungkan.'], 422);
+
+        $myLevel = self::getJobLevel($me->jabatan);
+        $empLevel = self::getJobLevel($p->employee?->jabatan);
+
+        // Validasi Otoritas Approval:
+        // Case A: Approval Tahap 1 (Foreman/Supervisor)
+        // Kasus: Permintaan masih di tahap_1, dan user adalah pengawas yang dituju atau Level 1 berwenang
+        $isTahap1 = ($p->current_step ?? 'tahap_1') === 'tahap_1';
+        $isTahap2 = ($p->current_step ?? 'tahap_1') === 'tahap_2';
+
+        if ($isTahap1) {
+            // Harus cocok id pengawas atau memiliki level > pemohon dan cocok dept/area
+            $hasAuth = ($p->supervisor_id === $me->id) || ($myLevel > $empLevel && self::isMatchDeptAndArea($me, $p->employee));
+            if (!$hasAuth) {
+                return response()->json(['message' => 'Anda tidak memiliki wewenang untuk persetujuan Tahap 1 pada pengajuan ini.'], 403);
             }
-            $p->update(['status' => 'menunggu', 'catatan' => null, 'decided_at' => null, 'decided_by' => null]);
+        } elseif ($isTahap2) {
+            // Harus level 2 ke atas (Superintendent/Deputy/PJO) dan cocok dept/area
+            $hasAuth = ($myLevel >= 2) && self::isMatchDeptAndArea($me, $p->employee);
+            if (!$hasAuth) {
+                return response()->json(['message' => 'Persetujuan Tahap 2 memerlukan wewenang Superintendent / Deputy / PJO.'], 403);
+            }
         } else {
-            if ($p->status !== 'menunggu') {
-                return response()->json(['message' => 'Pengajuan ini sudah diproses.'], 422);
-            }
-            $p->update(['status' => $d['status'], 'catatan' => $d['catatan'] ?? null, 'decided_at' => now(), 'decided_by' => $me->id]);
+            return response()->json(['message' => 'Pengajuan ini sudah selesai diproses.'], 422);
         }
-        return response()->json($this->reqArr($p->fresh(['employee', 'supervisor'])));
+
+        // 'menunggu' = urungkan keputusan
+        if ($d['status'] === 'menunggu') {
+            if ($isTahap2) {
+                // Kembalikan dari tahap 2 ke tahap 1
+                $p->update([
+                    'status' => 'menunggu',
+                    'current_step' => 'tahap_1',
+                    'step_1_status' => null,
+                    'step_1_by' => null,
+                    'step_1_at' => null,
+                    'step_1_catatan' => null,
+                ]);
+            } else {
+                $p->update([
+                    'status' => 'menunggu',
+                    'current_step' => 'tahap_1',
+                    'catatan' => null,
+                    'decided_at' => null,
+                    'decided_by' => null,
+                ]);
+            }
+            return response()->json($this->reqArr($p->fresh(['employee', 'supervisor', 'step1By', 'step2By'])));
+        }
+
+        // Jika DITOLAK di tahap manapun -> Status final langsung DITOLAK
+        if ($d['status'] === 'ditolak') {
+            $catatan = $d['catatan'] ?? 'Ditolak';
+            if ($isTahap1) {
+                $p->update([
+                    'status' => 'ditolak',
+                    'current_step' => 'selesai',
+                    'step_1_by' => $me->id,
+                    'step_1_at' => now(),
+                    'step_1_status' => 'ditolak',
+                    'step_1_catatan' => $catatan,
+                    'catatan' => "Tahap 1 Ditolak: {$catatan}",
+                    'decided_at' => now(),
+                    'decided_by' => $me->id,
+                ]);
+            } else {
+                $p->update([
+                    'status' => 'ditolak',
+                    'current_step' => 'selesai',
+                    'step_2_by' => $me->id,
+                    'step_2_at' => now(),
+                    'step_2_status' => 'ditolak',
+                    'step_2_catatan' => $catatan,
+                    'catatan' => "Tahap 2 Ditolak: {$catatan}",
+                    'decided_at' => now(),
+                    'decided_by' => $me->id,
+                ]);
+            }
+            return response()->json($this->reqArr($p->fresh(['employee', 'supervisor', 'step1By', 'step2By'])));
+        }
+
+        // Jika DISETUJUI:
+        if ($d['status'] === 'disetujui') {
+            if ($isTahap1) {
+                // Lolos Tahap 1 -> Naik ke Tahap 2 (Status tetap 'menunggu', current_step = 'tahap_2')
+                $catatan = $d['catatan'] ?? 'Disetujui oleh Pengawas Lapangan (Tahap 1)';
+                $p->update([
+                    'step_1_by' => $me->id,
+                    'step_1_at' => now(),
+                    'step_1_status' => 'disetujui',
+                    'step_1_catatan' => $catatan,
+                    'current_step' => 'tahap_2',
+                    'status' => 'menunggu', // menunggu persetujuan tahap 2
+                    'catatan' => 'ACC Tahap 1 Selesai. Menunggu ACC Superintendent / Kabag (Tahap 2).',
+                ]);
+            } elseif ($isTahap2) {
+                // Lolos Tahap 2 -> Status Final DISETUJUI RESMI
+                $catatan = $d['catatan'] ?? 'Disetujui Final oleh Superintendent / PJO (Tahap 2)';
+                $p->update([
+                    'step_2_by' => $me->id,
+                    'step_2_at' => now(),
+                    'step_2_status' => 'disetujui',
+                    'step_2_catatan' => $catatan,
+                    'current_step' => 'selesai',
+                    'status' => 'disetujui', // Final ACC
+                    'catatan' => $catatan,
+                    'decided_at' => now(),
+                    'decided_by' => $me->id,
+                ]);
+            }
+        }
+
+        return response()->json($this->reqArr($p->fresh(['employee', 'supervisor', 'step1By', 'step2By'])));
     }
 
     public function cancel(Request $r, int $id)

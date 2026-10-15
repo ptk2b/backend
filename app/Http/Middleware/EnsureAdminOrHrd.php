@@ -37,6 +37,9 @@ class EnsureAdminOrHrd
         if (str_contains($path, 'sanctions') && $user->canAccessModule('sp-karyawan', 'write')) {
             return $next($request);
         }
+        if (str_contains($path, 'izin') && $user->canAccessModule('izin-lapangan', 'write')) {
+            return $next($request);
+        }
 
         return response()->json([
             'status'  => 'error',
