@@ -314,21 +314,21 @@ class IzinLapanganController extends Controller
             'lampiran' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:3072',
         ]);
 
-        $mulai = Carbon::parse($d['mulai']);
-        $selesai = Carbon::parse($d['selesai']);
+        $mulai = Carbon::parse($d['mulai'])->startOfDay();
+        $selesai = Carbon::parse($d['selesai'])->startOfDay();
+        $today = Carbon::today();
         $durasi = $mulai->diffInDays($selesai) + 1;
 
         $err = null;
-        if ($d['jenis'] === 'cuti' && $mulai->lt(today())) {
-            $err = 'Cuti harus dimulai hari ini atau setelahnya.';
-        } elseif ($mulai->lt(today()->subDays(7))) {
-            $err = 'Pengajuan mundur maksimal 7 hari.';
+        // Anti-Kecurangan Tanggal Lampau: Pengajuan izin/cuti/sakit TIDAK BISA diajukan di hari yang sudah lewat
+        if ($mulai->lt($today)) {
+            $err = 'Tanggal mulai tidak boleh di hari yang sudah lewat. Pengajuan maksimal dilakukan di hari H (' . $today->format('d/m/Y') . ') atau setelahnya.';
         } elseif ($d['jenis'] === 'cuti' && $durasi > self::MAKS_CUTI_SEKALI) {
             $err = 'Cuti maksimal ' . self::MAKS_CUTI_SEKALI . ' hari sekali pengajuan.';
         } elseif ($durasi > 60) {
-            $err = 'Durasi terlalu panjang.';
+            $err = 'Durasi terlalu panjang (maksimal 60 hari).';
         } elseif ($d['jenis'] === 'sakit' && !$r->hasFile('lampiran')) {
-            $err = 'Lampirkan foto atau PDF surat sakit.';
+            $err = 'Lampirkan foto atau PDF surat sakit resmi dokter.';
         }
 
         $sup = $this->aktif()->find($d['supervisor_id']);

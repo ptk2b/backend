@@ -228,8 +228,16 @@ class AdminIzinLapanganController extends Controller
         $employee = Employee::findOrFail($d['employee_id']);
         $supervisor = Employee::findOrFail($d['supervisor_id']);
 
-        $mulai = Carbon::parse($d['mulai']);
-        $selesai = Carbon::parse($d['selesai']);
+        $mulai = Carbon::parse($d['mulai'])->startOfDay();
+        $selesai = Carbon::parse($d['selesai'])->startOfDay();
+        $today = Carbon::today();
+
+        if ($mulai->lt($today)) {
+            return response()->json([
+                'message' => 'Tanggal mulai tidak boleh di hari yang sudah lewat. Maksimal di hari pengajuan (' . $today->format('d/m/Y') . ') atau setelahnya.',
+            ], 422);
+        }
+
         $durasi = $mulai->diffInDays($selesai) + 1;
 
         $path = $r->hasFile('lampiran') ? $r->file('lampiran')->store('izin-lampiran', 'local') : null;
