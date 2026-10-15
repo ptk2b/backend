@@ -126,6 +126,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/admin/izin/requests/{id}/override', [AdminIzinLapanganController::class, 'override'])->whereNumber('id');
         Route::get('/admin/izin/calendar', [AdminIzinLapanganController::class, 'calendar']);
         Route::get('/admin/izin/export', [AdminIzinLapanganController::class, 'export']);
+
+        // Kelola Jenjang Jabatan Persetujuan (Approval Hierarchy)
+        Route::get('/admin/izin/hierarchies', [AdminIzinLapanganController::class, 'getHierarchies']);
+        Route::post('/admin/izin/hierarchies', [AdminIzinLapanganController::class, 'storeHierarchy']);
+        Route::put('/admin/izin/hierarchies/{id}', [AdminIzinLapanganController::class, 'updateHierarchy'])->whereNumber('id');
+        Route::delete('/admin/izin/hierarchies/{id}', [AdminIzinLapanganController::class, 'deleteHierarchy'])->whereNumber('id');
+        Route::post('/admin/izin/hierarchies/reset', [AdminIzinLapanganController::class, 'resetHierarchies']);
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====

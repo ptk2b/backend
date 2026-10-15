@@ -25,6 +25,7 @@ class IzinLapanganController extends Controller
 
     /**
      * Jenjang Level Jabatan Persetujuan:
+     * Mengambil level dinamis dari tabel izin_approval_hierarchies yang diatur oleh Super Admin.
      * Level 0 = Crew/Bawahan (Driver, Mekanik, Operator, Helper, dll.)
      * Level 1 = Foreman, Leader, Kordinator, Supervisor
      * Level 2 = Superintendent, Penanggung Jawab, Kabag
@@ -33,7 +34,31 @@ class IzinLapanganController extends Controller
      */
     public static function getJobLevel(?string $jabatan): int
     {
-        $j = Str::upper((string) $jabatan);
+        if (empty($jabatan)) {
+            return 0;
+        }
+
+        $j = Str::upper(trim((string) $jabatan));
+
+        // 1. Cek dari konfigurasi dinamis database (diatur oleh Super Admin)
+        try {
+            $rules = \Illuminate\Support\Facades\Cache::remember('izin_hierarchy_rules', 300, function () {
+                return \App\Models\IzinApprovalHierarchy::where('is_active', true)
+                    ->orderByDesc('level')
+                    ->get(['keyword', 'level']);
+            });
+
+            foreach ($rules as $r) {
+                $kw = Str::upper(trim($r->keyword));
+                if (!empty($kw) && str_contains($j, $kw)) {
+                    return (int) $r->level;
+                }
+            }
+        } catch (\Throwable $e) {
+            // fallback jika table belum siap
+        }
+
+        // 2. Fallback pola dasar
         if (preg_match('/\bPJO\b/i', $j)) {
             return 4;
         }

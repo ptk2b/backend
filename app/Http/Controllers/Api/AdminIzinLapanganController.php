@@ -364,4 +364,98 @@ class AdminIzinLapanganController extends Controller
 
         return Response::stream($callback, 200, $headers);
     }
+
+    // ===============================================================
+    // KELOLA JENJANG JABATAN PERSETUJUAN (MANUAL & FLEKSIBEL)
+    // ===============================================================
+
+    public function getHierarchies()
+    {
+        $list = \App\Models\IzinApprovalHierarchy::orderByDesc('level')->orderBy('keyword')->get();
+        return response()->json($list);
+    }
+
+    public function storeHierarchy(Request $r)
+    {
+        $d = $r->validate([
+            'keyword' => 'required|string|max:80',
+            'label' => 'nullable|string|max:120',
+            'level' => 'required|integer|in:1,2,3,4',
+            'keterangan' => 'nullable|string|max:200',
+        ]);
+
+        $kw = strtoupper(trim($d['keyword']));
+
+        $item = \App\Models\IzinApprovalHierarchy::updateOrCreate(
+            ['keyword' => $kw],
+            [
+                'label' => $d['label'] ?? $kw,
+                'level' => (int) $d['level'],
+                'keterangan' => $d['keterangan'] ?? null,
+                'is_active' => true,
+            ]
+        );
+
+        \Illuminate\Support\Facades\Cache::forget('izin_hierarchy_rules');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Jenjang jabatan persetujuan berhasil disimpan.',
+            'data' => $item,
+        ]);
+    }
+
+    public function updateHierarchy(Request $r, int $id)
+    {
+        $d = $r->validate([
+            'keyword' => 'required|string|max:80',
+            'label' => 'nullable|string|max:120',
+            'level' => 'required|integer|in:1,2,3,4',
+            'keterangan' => 'nullable|string|max:200',
+            'is_active' => 'boolean',
+        ]);
+
+        $item = \App\Models\IzinApprovalHierarchy::findOrFail($id);
+        $item->update([
+            'keyword' => strtoupper(trim($d['keyword'])),
+            'label' => $d['label'] ?? $item->label,
+            'level' => (int) $d['level'],
+            'keterangan' => $d['keterangan'] ?? $item->keterangan,
+            'is_active' => $d['is_active'] ?? $item->is_active,
+        ]);
+
+        \Illuminate\Support\Facades\Cache::forget('izin_hierarchy_rules');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Jenjang jabatan berhasil diperbarui.',
+            'data' => $item,
+        ]);
+    }
+
+    public function deleteHierarchy(int $id)
+    {
+        $item = \App\Models\IzinApprovalHierarchy::findOrFail($id);
+        $item->delete();
+
+        \Illuminate\Support\Facades\Cache::forget('izin_hierarchy_rules');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Jenjang jabatan berhasil dihapus.',
+        ]);
+    }
+
+    public function resetHierarchies()
+    {
+        \App\Models\IzinApprovalHierarchy::truncate();
+        \Illuminate\Support\Facades\Artisan::call('db:seed', ['--class' => 'IzinApprovalHierarchySeeder', '--force' => true]);
+        \Illuminate\Support\Facades\Cache::forget('izin_hierarchy_rules');
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Jenjang jabatan berhasil dikembalikan ke standar awal.',
+            'data' => \App\Models\IzinApprovalHierarchy::orderByDesc('level')->get(),
+        ]);
+    }
 }
