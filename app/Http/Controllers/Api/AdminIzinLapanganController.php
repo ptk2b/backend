@@ -82,6 +82,11 @@ class AdminIzinLapanganController extends Controller
             ->orderBy('nama_lengkap')
             ->get(['id', 'nama_lengkap as nama', 'departemen', 'dilokasi']);
 
+        // Daftar karyawan aktif untuk bantuan input admin
+        $employees = Employee::where('status_karyawan', 'ACTIVE')
+            ->orderBy('nama_lengkap')
+            ->get(['id', 'nama_lengkap as nama', 'nip', 'nik', 'jabatan', 'departemen']);
+
         return response()->json([
             'year' => $year,
             'month' => $month,
@@ -94,6 +99,7 @@ class AdminIzinLapanganController extends Controller
             'departemen_stats' => $deptCounts,
             'departments' => $departments,
             'supervisors' => $supervisors,
+            'employees' => $employees,
         ]);
     }
 
@@ -181,6 +187,51 @@ class AdminIzinLapanganController extends Controller
             'message' => 'Status pengajuan berhasil diperbarui oleh Administrator.',
             'data' => $this->serializeItem($item->fresh(['employee', 'supervisor', 'decider'])),
         ]);
+    }
+
+    public function storeByAdmin(Request $r)
+    {
+        $d = $r->validate([
+            'employee_id' => 'required|exists:employees,id',
+            'supervisor_id' => 'required|exists:employees,id',
+            'jenis' => 'required|in:cuti,izin,sakit',
+            'mulai' => 'required|date_format:Y-m-d',
+            'selesai' => 'required|date_format:Y-m-d|after_or_equal:mulai',
+            'alasan' => 'required|string|max:200',
+            'status' => 'required|in:menunggu,disetujui',
+            'lampiran' => 'nullable|file|mimes:jpg,jpeg,png,pdf|max:4096',
+            'catatan' => 'nullable|string|max:200',
+        ]);
+
+        $employee = Employee::findOrFail($d['employee_id']);
+        $supervisor = Employee::findOrFail($d['supervisor_id']);
+
+        $mulai = Carbon::parse($d['mulai']);
+        $selesai = Carbon::parse($d['selesai']);
+        $durasi = $mulai->diffInDays($selesai) + 1;
+
+        $path = $r->hasFile('lampiran') ? $r->file('lampiran')->store('izin-lampiran', 'local') : null;
+
+        $p = IzinRequest::create([
+            'employee_id' => $employee->id,
+            'supervisor_id' => $supervisor->id,
+            'jenis' => $d['jenis'],
+            'mulai' => $d['mulai'],
+            'selesai' => $d['selesai'],
+            'durasi' => $durasi,
+            'alasan' => trim($d['alasan']),
+            'status' => $d['status'],
+            'catatan' => $d['catatan'] ?? ($d['status'] === 'disetujui' ? 'Diinput & disetujui langsung oleh Admin Area' : 'Diinput via Admin Area'),
+            'lampiran_path' => $path,
+            'decided_at' => $d['status'] === 'disetujui' ? now() : null,
+            'decided_by' => $d['status'] === 'disetujui' ? $supervisor->id : null,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Pengajuan izin karyawan berhasil dicatat oleh Admin.',
+            'data' => $this->serializeItem($p->load(['employee', 'supervisor'])),
+        ], 201);
     }
 
     public function calendar(Request $r)
