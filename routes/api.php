@@ -13,6 +13,7 @@ use App\Http\Controllers\Api\UserApiController;
 use App\Http\Controllers\Api\SimperPhotoController;
 use App\Http\Controllers\Api\RfuApiController;
 use App\Http\Controllers\Api\UnitWorkshopApiController;
+use App\Http\Controllers\Api\IzinLapanganController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -52,6 +53,17 @@ Route::middleware('throttle:10,1')->group(function () {
 // Rate limit: 30 request per menit (3 foto per submit, 10 submit per menit max)
 Route::middleware('throttle:30,1')->group(function () {
     Route::post('/public/upload-simper-photo', [SimperPhotoController::class, 'upload']);
+});
+
+// ===== IZIN LAPANGAN MANDIRI (login nama + NIK, token terenkripsi) =====
+Route::middleware('throttle:60,1')->prefix('public/izin')->group(function () {
+    Route::post('/login', [IzinLapanganController::class, 'login'])->middleware('throttle:60,1');
+    Route::get('/requests/{id}/lampiran', [IzinLapanganController::class, 'lampiran'])->whereNumber('id');
+    Route::get('/bootstrap', [IzinLapanganController::class, 'bootstrap']);
+    Route::post('/requests', [IzinLapanganController::class, 'store']);
+    Route::post('/requests/{id}/decide', [IzinLapanganController::class, 'decide'])->whereNumber('id');
+    Route::post('/requests/{id}/cancel', [IzinLapanganController::class, 'cancel'])->whereNumber('id');
+    Route::post('/lokasi', [IzinLapanganController::class, 'toggleLokasi']);
 });
 
 // ===== PROTECTED ROUTES =====
