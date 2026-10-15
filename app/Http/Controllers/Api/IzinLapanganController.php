@@ -119,6 +119,18 @@ class IzinLapanganController extends Controller
         return true;
     }
 
+    /**
+     * Normalisasi nama untuk pencocokan toleran (hapus tanda baca, multiple space, uppercase)
+     */
+    private function norm(?string $str): string
+    {
+        if (empty($str)) {
+            return '';
+        }
+        $clean = preg_replace('/[^a-zA-Z0-9]/', '', (string) $str);
+        return Str::upper(trim((string) $clean));
+    }
+
     private function aktif()
     {
         return Employee::query()
@@ -214,17 +226,39 @@ class IzinLapanganController extends Controller
     {
         $d = $r->validate(['nama' => 'required|string|max:150', 'nip' => 'required|string|max:50']);
         $no = trim($d['nip']);
-        // Batas percobaan per NIP + IP: 5 gagal per 10 menit, tanpa memblokir karyawan lain di jaringan yang sama.
+        $cleanNip = preg_replace('/[^a-zA-Z0-9]/', '', $no);
+        $normInputNama = $this->norm($d['nama']);
+
+        // Batas percobaan per NIP + IP: 5 gagal per 10 menit
         $key = 'izin-login:' . Str::lower($no) . '|' . $r->ip();
         if (RateLimiter::tooManyAttempts($key, 5)) {
             $m = (int) ceil(RateLimiter::availableIn($key) / 60);
             return response()->json(['message' => "Terlalu banyak percobaan. Coba lagi dalam {$m} menit."], 429);
         }
-        $e = $this->aktif()->where(fn ($q) => $q->where('nip', $no)->orWhere('nik', $no))
-            ->get()->first(fn ($x) => $this->norm($x->nama_lengkap) === $this->norm($d['nama']));
+
+        // Cari karyawan ACTIVE yang NIP atau NIK cocok
+        $e = $this->aktif()
+            ->get()
+            ->first(function ($x) use ($no, $cleanNip, $normInputNama) {
+                $dbNipClean = preg_replace('/[^a-zA-Z0-9]/', '', (string) $x->nip);
+                $dbNikClean = preg_replace('/[^a-zA-Z0-9]/', '', (string) $x->nik);
+
+                $nipMatch = (strcasecmp(trim((string)$x->nip), $no) === 0)
+                    || (!empty($cleanNip) && ($dbNipClean === $cleanNip || $dbNikClean === $cleanNip));
+
+                if (!$nipMatch) {
+                    return false;
+                }
+
+                $dbNamaNorm = $this->norm($x->nama_lengkap);
+                return $dbNamaNorm === $normInputNama
+                    || str_contains($dbNamaNorm, $normInputNama)
+                    || str_contains($normInputNama, $dbNamaNorm);
+            });
+
         if (!$e) {
             RateLimiter::hit($key, 600);
-            return response()->json(['message' => 'Nama atau NIP tidak cocok dengan data HR.'], 422);
+            return response()->json(['message' => 'Nama atau NIP tidak cocok dengan data HR / status karyawan tidak aktif.'], 422);
         }
         RateLimiter::clear($key);
         $token = Crypt::encryptString(json_encode(['id' => $e->id, 'exp' => time() + self::TOKEN_HARI * 86400]));
