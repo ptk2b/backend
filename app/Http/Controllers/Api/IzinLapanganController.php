@@ -20,7 +20,7 @@ class IzinLapanganController extends Controller
 {
     private const JENIS = ['sakit', 'cuti', 'izin'];
     private const KUOTA_CUTI = 18;
-    private const MAKS_CUTI_SEKALI = 6;
+    private const MAKS_CUTI_SEKALI = 18;
     private const TOKEN_HARI = 14;
 
     /**
