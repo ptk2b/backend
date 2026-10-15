@@ -26,24 +26,31 @@ class EnsureAdminOrHrd
             return $next($request);
         }
 
+        // Tentukan level akses yang dibutuhkan:
+        // Request GET/HEAD hanya butuh izin 'read' (Lihat Saja atau Bisa Edit)
+        // Request POST/PUT/PATCH/DELETE butuh izin 'write' (Bisa Edit)
+        $isReadRequest = in_array(strtoupper($request->method()), ['GET', 'HEAD']);
+        $requiredLevel = $isReadRequest ? 'read' : 'write';
+
         // Check granular permission by URL route path
         $path = $request->path();
-        if (str_contains($path, 'rfu') && $user->canAccessModule('rfu-unit', 'write')) {
+        if (str_contains($path, 'rfu') && $user->canAccessModule('rfu-unit', $requiredLevel)) {
             return $next($request);
         }
-        if (str_contains($path, 'attendance') && $user->canAccessModule('monitoring-absensi', 'write')) {
+        if (str_contains($path, 'attendance') && $user->canAccessModule('monitoring-absensi', $requiredLevel)) {
             return $next($request);
         }
-        if (str_contains($path, 'sanctions') && $user->canAccessModule('sp-karyawan', 'write')) {
+        if (str_contains($path, 'sanctions') && $user->canAccessModule('sp-karyawan', $requiredLevel)) {
             return $next($request);
         }
-        if (str_contains($path, 'izin') && $user->canAccessModule('izin-lapangan', 'write')) {
+        if (str_contains($path, 'izin') && $user->canAccessModule('izin-lapangan', $requiredLevel)) {
             return $next($request);
         }
 
+        $actionWord = $isReadRequest ? 'melihat' : 'mengubah';
         return response()->json([
             'status'  => 'error',
-            'message' => 'Akses ditolak: Anda tidak memiliki izin untuk mengubah data pada modul ini.',
+            'message' => "Akses ditolak: Anda tidak memiliki izin untuk {$actionWord} data pada modul ini.",
         ], 403);
 
         return $next($request);
