@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\SimperPhotoController;
 use App\Http\Controllers\Api\RfuApiController;
 use App\Http\Controllers\Api\UnitWorkshopApiController;
 use App\Http\Controllers\Api\IzinLapanganController;
+use App\Http\Controllers\Api\AdminIzinLapanganController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -117,6 +118,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/admin/rfu/data-unit', [UnitWorkshopApiController::class, 'index']);
         Route::post('/admin/rfu/data-unit/import', [UnitWorkshopApiController::class, 'import']);
         Route::post('/admin/rfu/data-unit/sync', [UnitWorkshopApiController::class, 'syncToRfuRecords']);
+
+        // Kelola & Pengawasan Izin Lapangan (Admin & HRD)
+        Route::get('/admin/izin/dashboard', [AdminIzinLapanganController::class, 'dashboard']);
+        Route::get('/admin/izin/requests', [AdminIzinLapanganController::class, 'index']);
+        Route::post('/admin/izin/requests/{id}/override', [AdminIzinLapanganController::class, 'override'])->whereNumber('id');
+        Route::get('/admin/izin/calendar', [AdminIzinLapanganController::class, 'calendar']);
+        Route::get('/admin/izin/export', [AdminIzinLapanganController::class, 'export']);
     });
 
     // ===== MUTATING & ADMIN-ONLY ROUTES (Protected by role.admin) =====
