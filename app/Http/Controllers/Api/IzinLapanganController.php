@@ -98,17 +98,27 @@ class IzinLapanganController extends Controller
      */
     public static function isMatchDeptAndArea(Employee $supervisor, Employee $karyawan): bool
     {
-        // 1. Departemen wajib sama (kecuali Deputy / PJO yang mencakup seluruh departemen site)
         $supLevel = self::getJobLevel($supervisor->jabatan);
-        if ($supLevel < 3) {
-            $supDept = Str::lower(trim((string) $supervisor->departemen));
+        $supDept = Str::lower(trim((string) $supervisor->departemen));
+        $supJabatan = Str::lower(trim((string) $supervisor->jabatan));
+
+        // Pengecualian Departemen Lintas Site:
+        // 1. Level 3 ke atas (Deputy, PJO)
+        // 2. Departemen MANAGEMENT, HC, HR, HRD, atau Jabatan yang mengandung 'KABAG HC' / 'HR'
+        // Pejabat HC / HRD / Management berwenang sebagai penentu Jenjang 2 untuk semua karyawan lapangan.
+        $isCrossDept = ($supLevel >= 3)
+            || in_array($supDept, ['management', 'hc', 'hr', 'hrd', 'head office', 'kantor'])
+            || str_contains($supJabatan, 'hc')
+            || str_contains($supJabatan, 'hr');
+
+        if (!$isCrossDept) {
             $empDept = Str::lower(trim((string) $karyawan->departemen));
             if ($supDept !== $empDept) {
                 return false;
             }
         }
 
-        // 2. Jika pengawas memiliki kode area spesifik di jabatannya, harus cocok dengan kode area karyawan
+        // 2. Jika pengawas memiliki kode area spesifik di jabatannya (misal - SMC, - OB), harus cocok dengan kode area karyawan
         $supArea = self::extractAreaTag($supervisor->jabatan);
         $empArea = self::extractAreaTag($karyawan->jabatan);
 
@@ -275,10 +285,15 @@ class IzinLapanganController extends Controller
 
         // Hitung fingerprint cepat untuk ETag (meminimalisir transfer data & parsing JSON)
         $isPengawas = $this->isPengawas($me);
-        $lastReqUpdate = IzinRequest::where(function ($q) use ($me, $isPengawas) {
+        $myLevel = self::getJobLevel($me->jabatan);
+        
+        $lastReqUpdate = IzinRequest::where(function ($q) use ($me, $isPengawas, $myLevel) {
             $q->where('employee_id', $me->id);
             if ($isPengawas) {
                 $q->orWhere('supervisor_id', $me->id);
+                if ($myLevel >= 2) {
+                    $q->orWhere('current_step', 'tahap_2');
+                }
             }
         })->max('updated_at');
 
@@ -286,8 +301,6 @@ class IzinLapanganController extends Controller
         if ($r->header('If-None-Match') === '"' . $etag . '"' || $r->header('If-None-Match') === $etag) {
             return response('', 304)->header('ETag', '"' . $etag . '"');
         }
-
-        $myLevel = self::getJobLevel($me->jabatan);
 
         // Cari daftar pengawas yang levelnya di atas saya dan cocok Departemen & Area
         $pengawas = $this->aktif()->where('id', '!=', $me->id)->get()
@@ -320,8 +333,15 @@ class IzinLapanganController extends Controller
         if ($isPengawas) {
             // Antrean Menunggu:
             // 1. Pengawas Tingkat 1 (Foreman/Supervisor): Permintaan di tahap_1 yang ditujukan kepadanya
-            // 2. Pejabat Tingkat 2 (Superintendent/Kabag/Deputy): Permintaan di tahap_2 (sudah lolos tahap_1) yang cocok departemen/areanya
-            $qMenunggu = IzinRequest::where(function ($q) use ($me, $myLevel) {
+            // 2. Pejabat Tingkat 2 (Superintendent/Kabag/Deputy): Permintaan di tahap_2 (sudah lolos tahap_1)
+            $supDept = Str::lower(trim((string) $me->departemen));
+            $supJabatan = Str::lower(trim((string) $me->jabatan));
+            $isCrossDept = ($myLevel >= 3)
+                || in_array($supDept, ['management', 'hc', 'hr', 'hrd', 'head office', 'kantor'])
+                || str_contains($supJabatan, 'hc')
+                || str_contains($supJabatan, 'hr');
+
+            $qMenunggu = IzinRequest::where(function ($q) use ($me, $myLevel, $isCrossDept) {
                 if ($myLevel === 1) {
                     // Level 1 meng-ACC tahap 1
                     $q->where('supervisor_id', $me->id)
@@ -330,12 +350,13 @@ class IzinLapanganController extends Controller
                 } elseif ($myLevel >= 2) {
                     // Level 2+ meng-ACC tahap 2 setelah lolos tahap 1
                     $q->where('current_step', 'tahap_2')
-                      ->where('status', 'menunggu')
-                      ->whereHas('employee', function ($eq) use ($me) {
-                          if (self::getJobLevel($me->jabatan) < 3) {
-                              $eq->where('departemen', $me->departemen);
-                          }
-                      });
+                      ->where('status', 'menunggu');
+
+                    if (!$isCrossDept) {
+                        $q->whereHas('employee', function ($eq) use ($me) {
+                            $eq->where('departemen', $me->departemen);
+                        });
+                    }
                     
                     // Atau jika dia ditunjuk langsung sebagai supervisor_id di tahap 1 (bila pemohon adalah Foreman)
                     $q->orWhere(function ($sub) use ($me) {
