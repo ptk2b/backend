@@ -69,6 +69,19 @@ class AdminIzinLapanganController extends Controller
         $departments = Employee::whereNotNull('departemen')->where('departemen', '!=', '')
             ->distinct()->pluck('departemen')->sort()->values();
 
+        // Daftar pengawas lapangan aktif beserta status dilokasi
+        $supervisors = Employee::where('status_karyawan', 'ACTIVE')
+            ->where(function ($q) {
+                $q->where('jabatan', 'like', '%FOREMAN%')
+                  ->orWhere('jabatan', 'like', '%SUPERVISOR%')
+                  ->orWhere('jabatan', 'like', '%PENGAWAS%')
+                  ->orWhere('jabatan', 'like', '%LEADER%')
+                  ->orWhere('jabatan', 'like', '%SUPERINTENDENT%')
+                  ->orWhere('jabatan', 'like', '%MANAGER%');
+            })
+            ->orderBy('nama_lengkap')
+            ->get(['id', 'nama_lengkap as nama', 'departemen', 'dilokasi']);
+
         return response()->json([
             'year' => $year,
             'month' => $month,
@@ -76,10 +89,11 @@ class AdminIzinLapanganController extends Controller
                 'menunggu' => $totalMenunggu,
                 'disetujui_bulan_ini' => $totalDisetujui,
                 'ditolak_bulan_ini' => $totalDitolak,
-                'total_hari_izin' => $totalHariBulanIni,
+                'total_hari_cuti_bulan_ini' => $totalHariBulanIni,
             ],
             'departemen_stats' => $deptCounts,
             'departments' => $departments,
+            'supervisors' => $supervisors,
         ]);
     }
 
