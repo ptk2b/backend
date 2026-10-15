@@ -56,6 +56,47 @@ class RfuApiController extends Controller
     }
 
     /**
+     * Dapatkan timestamp waktu terakhir perubahan data baik di:
+     * 1. rfu_unit_records (tambah, edit, status RFU, hapus)
+     * 2. rfu_locations (edit counter/target RFU & Plan)
+     * 3. unit_workshops (impor data unit workshop & sinkronisasi)
+     */
+    private function getLatestDataUpdatedAt(): Carbon
+    {
+        $timestamps = [];
+
+        try {
+            $latestUnit = RfuUnitRecord::max('updated_at');
+            if ($latestUnit) {
+                $timestamps[] = Carbon::parse($latestUnit)->timezone('Asia/Makassar');
+            }
+        } catch (\Throwable $e) {}
+
+        try {
+            $latestLoc = RfuLocation::max('updated_at');
+            if ($latestLoc) {
+                $timestamps[] = Carbon::parse($latestLoc)->timezone('Asia/Makassar');
+            }
+        } catch (\Throwable $e) {}
+
+        try {
+            if (Schema::hasTable('unit_workshops')) {
+                $latestWorkshop = UnitWorkshop::max('updated_at');
+                if ($latestWorkshop) {
+                    $timestamps[] = Carbon::parse($latestWorkshop)->timezone('Asia/Makassar');
+                }
+            }
+        } catch (\Throwable $e) {}
+
+        if (!empty($timestamps)) {
+            usort($timestamps, fn($a, $b) => $b->getTimestamp() <=> $a->getTimestamp());
+            return $timestamps[0];
+        }
+
+        return Carbon::now('Asia/Makassar');
+    }
+
+    /**
      * Public endpoint untuk halaman Owner (tanpa login)
      */
     public function publicDashboard(Request $request): JsonResponse
@@ -79,6 +120,7 @@ class RfuApiController extends Controller
             : 0;
 
         $now = Carbon::now('Asia/Makassar');
+        $latestUpdated = $this->getLatestDataUpdatedAt();
 
         $dtNumbers = $locations->flatMap(function ($loc) {
             return $loc->activeUnits->pluck('dt_number');
@@ -94,9 +136,10 @@ class RfuApiController extends Controller
         }
 
         return response()->json([
-            'report_time' => $now->format('H:i'),
-            'report_date' => $now->translatedFormat('d F Y'),
+            'report_time' => $latestUpdated->format('H:i'),
+            'report_date' => $latestUpdated->translatedFormat('d F Y'),
             'timestamp' => $now->toIso8601String(),
+            'last_updated_at' => $latestUpdated->toIso8601String(),
             'summary' => [
                 'total_rfu' => $totalRfu,
                 'total_plan' => $totalPlan,
@@ -204,11 +247,14 @@ class RfuApiController extends Controller
 
         $totalRfu = $locations->sum('rfu_count');
         $totalPlan = $locations->sum('plan_count');
-        $totalActive = RfuUnitRecord::where('status', 'ON_PROGRESS')->count();
+        $latestUpdated = $this->getLatestDataUpdatedAt();
 
         return response()->json([
             'locations' => $locations,
             'units' => $units,
+            'report_time' => $latestUpdated->format('H:i'),
+            'report_date' => $latestUpdated->translatedFormat('d F Y'),
+            'last_updated_at' => $latestUpdated->toIso8601String(),
             'summary' => [
                 'total_rfu' => $totalRfu,
                 'total_plan' => $totalPlan,
@@ -249,6 +295,10 @@ class RfuApiController extends Controller
 
         $unit = \Illuminate\Support\Facades\DB::transaction(function () use ($validated) {
             $created = RfuUnitRecord::create($validated);
+            $location = RfuLocation::find($validated['location_id']);
+            if ($location) {
+                $location->touch();
+            }
             $this->syncLocationCount($validated['location_id']);
             return $created;
         });
@@ -331,6 +381,7 @@ class RfuApiController extends Controller
             if ($incrementRfuCount) {
                 $location->increment('rfu_count');
             }
+            $location->touch();
             $this->syncLocationCount($location->id);
         }
 
@@ -349,6 +400,10 @@ class RfuApiController extends Controller
         $locationId = $unit->location_id;
         $unit->delete();
 
+        $location = RfuLocation::find($locationId);
+        if ($location) {
+            $location->touch();
+        }
         $this->syncLocationCount($locationId);
 
         return response()->json([
@@ -402,6 +457,7 @@ class RfuApiController extends Controller
                     }
                     if (!empty($updateData)) {
                         $location->update($updateData);
+                        $location->touch();
                     }
                 }
             }
@@ -461,6 +517,7 @@ class RfuApiController extends Controller
         ]);
 
         $location->update($validated);
+        $location->touch();
 
         return response()->json([
             'message' => "Data counter lokasi {$location->name} berhasil diperbarui.",

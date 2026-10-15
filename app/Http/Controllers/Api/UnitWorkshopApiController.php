@@ -212,6 +212,7 @@ class UnitWorkshopApiController extends Controller
                     ->where('status', 'ON_PROGRESS')
                     ->count();
                 $loc->update(['on_progress_count' => $count]);
+                $loc->touch();
             }
         });
 
