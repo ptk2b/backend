@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\RfuApiController;
 use App\Http\Controllers\Api\UnitWorkshopApiController;
 use App\Http\Controllers\Api\IzinLapanganController;
 use App\Http\Controllers\Api\AdminIzinLapanganController;
+use App\Http\Controllers\Api\BreakroomController;
 use Illuminate\Support\Facades\Route;
 
 // ===== PUBLIC ROUTES =====
@@ -65,6 +66,16 @@ Route::middleware('throttle:60,1')->prefix('public/izin')->group(function () {
     Route::post('/requests/{id}/decide', [IzinLapanganController::class, 'decide'])->whereNumber('id');
     Route::post('/requests/{id}/cancel', [IzinLapanganController::class, 'cancel'])->whereNumber('id');
     Route::post('/lokasi', [IzinLapanganController::class, 'toggleLokasi']);
+});
+
+// ===== K2B EMPLOYEE BREAKROOM & COMIC LIBRARY =====
+Route::middleware('throttle:120,1')->prefix('public/breakroom')->group(function () {
+    Route::post('/login', [BreakroomController::class, 'login']);
+    Route::get('/me', [BreakroomController::class, 'me']);
+    Route::get('/library', [BreakroomController::class, 'getLibrary']);
+    Route::post('/bookmark', [BreakroomController::class, 'updateBookmark']);
+    Route::post('/progress', [BreakroomController::class, 'updateProgress']);
+    Route::delete('/bookmark/{comicSlug}', [BreakroomController::class, 'removeBookmark']);
 });
 
 // ===== PROTECTED ROUTES =====
