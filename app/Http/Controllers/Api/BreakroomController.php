@@ -204,12 +204,12 @@ class BreakroomController extends Controller
         $item = EmployeeComicLibrary::updateOrCreate(
             [
                 'employee_id' => $emp->id,
-                'comic_slug'  => $comicSlug,
+                'comic_slug'  => Str::limit($comicSlug, 250, ''),
             ],
             [
-                'comic_title' => $request->input('comic_title'),
-                'comic_thumb' => $request->input('comic_thumb'),
-                'comic_type'  => $request->input('comic_type', 'manhwa'),
+                'comic_title' => Str::limit((string) $request->input('comic_title'), 250, ''),
+                'comic_thumb' => $request->filled('comic_thumb') ? Str::limit((string) $request->input('comic_thumb'), 250, '') : null,
+                'comic_type'  => Str::limit((string) $request->input('comic_type', 'manhwa'), 50, ''),
                 'status'      => $status,
             ]
         );
@@ -243,23 +243,23 @@ class BreakroomController extends Controller
             'scroll_progress'    => 'nullable|integer|min:0|max:100',
         ]);
 
-        $comicSlug   = trim((string) $request->input('comic_slug'));
-        $chapterNum  = trim((string) $request->input('chapter_num'));
-        $chapterSlug = trim((string) $request->input('chapter_slug', ''));
+        $comicSlug   = Str::limit(trim((string) $request->input('comic_slug')), 250, '');
+        $chapterNum  = Str::limit(trim((string) $request->input('chapter_num')), 50, '');
+        $chapterSlug = Str::limit(trim((string) $request->input('chapter_slug', '')), 250, '');
 
         $item = EmployeeComicLibrary::firstOrNew([
             'employee_id' => $emp->id,
             'comic_slug'  => $comicSlug,
         ]);
 
-        $item->comic_title        = $request->input('comic_title');
+        $item->comic_title        = Str::limit((string) $request->input('comic_title'), 250, '');
         if ($request->filled('comic_thumb')) {
-            $item->comic_thumb = $request->input('comic_thumb');
+            $item->comic_thumb = Str::limit((string) $request->input('comic_thumb'), 250, '');
         }
-        $item->comic_type         = $request->input('comic_type', $item->comic_type ?: 'manhwa');
+        $item->comic_type         = Str::limit((string) $request->input('comic_type', $item->comic_type ?: 'manhwa'), 50, '');
         $item->last_chapter_slug  = $chapterSlug;
         $item->last_chapter_num   = $chapterNum;
-        $item->last_chapter_title = $request->input('chapter_title', 'Chapter ' . $chapterNum);
+        $item->last_chapter_title = Str::limit((string) $request->input('chapter_title', 'Chapter ' . $chapterNum), 250, '');
         $item->scroll_progress    = (int) $request->input('scroll_progress', 0);
         $item->last_read_at       = Carbon::now();
 
