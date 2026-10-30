@@ -40,6 +40,15 @@ Route::get('/employees/sk/{filename}', [EmployeeApiController::class, 'downloadS
 Route::get('/contracts/{id}/sk', [EmployeeApiController::class, 'downloadContractSk'])->whereNumber('id');
 Route::get('/admin/sanctions/{id}/download', [EmployeeSanctionApiController::class, 'downloadFile'])->whereNumber('id');
 
+// ===== PUBLIC FINGERPRINT DEVICE MANAGEMENT (Standalone Dashboard Support) =====
+Route::prefix('public/fingerprint')->group(function () {
+    Route::get('/devices', [FingerprintDeviceApiController::class, 'devices']);
+    Route::get('/devices/{deviceId}/mappings', [FingerprintDeviceApiController::class, 'getMappings'])->whereNumber('deviceId');
+    Route::post('/devices/{deviceId}/mappings', [FingerprintDeviceApiController::class, 'saveMappings'])->whereNumber('deviceId');
+    Route::get('/devices/{deviceId}/logs', [FingerprintDeviceApiController::class, 'getLogs'])->whereNumber('deviceId');
+    Route::post('/devices/{deviceId}/sync-logs', [FingerprintDeviceApiController::class, 'syncLogs'])->whereNumber('deviceId');
+});
+
 // Fallback login route for unauthenticated API requests
 Route::get('/login', function () {
     return response()->json(['message' => 'Unauthenticated.'], 401);
