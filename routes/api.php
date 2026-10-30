@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\EmployeeApiController;
 use App\Http\Controllers\Api\EmployeeSanctionApiController;
 use App\Http\Controllers\Api\AttendanceApiController;
 use App\Http\Controllers\Api\FingerprintAttendanceController;
+use App\Http\Controllers\Api\FingerprintDeviceApiController;
 use App\Http\Controllers\Api\UserApiController;
 use App\Http\Controllers\Api\SimperPhotoController;
 use App\Http\Controllers\Api\RfuApiController;
@@ -151,6 +152,13 @@ Route::middleware('auth:sanctum')->group(function () {
         // Audit Presensi Finger vs Jadwal (Khusus Admin)
         Route::get('/admin/fingerprint/data', [FingerprintAttendanceController::class, 'data']);
         Route::post('/admin/fingerprint/sync', [FingerprintAttendanceController::class, 'sync']);
+
+        // Multi-Mesin / Multi-Device Fingerprint Management
+        Route::get('/admin/fingerprint/devices', [FingerprintDeviceApiController::class, 'devices']);
+        Route::get('/admin/fingerprint/devices/{deviceId}/mappings', [FingerprintDeviceApiController::class, 'getMappings'])->whereNumber('deviceId');
+        Route::post('/admin/fingerprint/devices/{deviceId}/mappings', [FingerprintDeviceApiController::class, 'saveMappings'])->whereNumber('deviceId');
+        Route::get('/admin/fingerprint/devices/{deviceId}/logs', [FingerprintDeviceApiController::class, 'getLogs'])->whereNumber('deviceId');
+        Route::post('/admin/fingerprint/devices/{deviceId}/sync-logs', [FingerprintDeviceApiController::class, 'syncLogs'])->whereNumber('deviceId');
         // User Management & Password Reset
         Route::get('/admin/users', [UserApiController::class, 'index']);
         Route::post('/admin/users', [UserApiController::class, 'store']);
