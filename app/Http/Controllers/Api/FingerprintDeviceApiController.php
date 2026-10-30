@@ -190,5 +190,61 @@ class FingerprintDeviceApiController extends Controller
             'data' => $logs,
         ]);
     }
+
+    /**
+     * Batch save schedule (jadwal) and full evaluation rekap snapshot to server.
+     */
+    public function saveSnapshot(Request $request, int $deviceId): JsonResponse
+    {
+        $request->validate([
+            'periode' => 'required|string',
+            'store' => 'required|array',
+        ]);
+
+        $device = FingerprintDevice::findOrFail($deviceId);
+        $periode = $request->input('periode');
+        $storeData = $request->input('store');
+
+        // Simpan snapshot JSON lengkap ke storage agar dapat ditarik instan oleh device / PC lain
+        $filename = "snapshot_{$device->code}_{$periode}.json";
+        $path = storage_path('app/fingerprint_snapshots');
+        if (!file_exists($path)) {
+            mkdir($path, 0755, true);
+        }
+        file_put_contents($path . '/' . $filename, json_encode($storeData));
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Data evaluasi & jadwal {$device->name} periode {$periode} berhasil disimpan di server.",
+        ]);
+    }
+
+    /**
+     * Download schedule & evaluation rekap snapshot from server.
+     */
+    public function getSnapshot(Request $request, int $deviceId): JsonResponse
+    {
+        $device = FingerprintDevice::findOrFail($deviceId);
+        $periode = $request->query('periode');
+
+        $filename = "snapshot_{$device->code}_{$periode}.json";
+        $filePath = storage_path("app/fingerprint_snapshots/{$filename}");
+
+        if (!file_exists($filePath)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Belum ada snapshot data server untuk {$device->name} periode {$periode}.",
+            ], 404);
+        }
+
+        $content = json_decode(file_get_contents($filePath), true);
+
+        return response()->json([
+            'status' => 'success',
+            'device' => $device->code,
+            'periode' => $periode,
+            'data' => $content,
+        ]);
+    }
 }
 

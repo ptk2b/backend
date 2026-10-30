@@ -47,6 +47,8 @@ Route::prefix('public/fingerprint')->group(function () {
     Route::post('/devices/{deviceId}/mappings', [FingerprintDeviceApiController::class, 'saveMappings'])->whereNumber('deviceId');
     Route::get('/devices/{deviceId}/logs', [FingerprintDeviceApiController::class, 'getLogs'])->whereNumber('deviceId');
     Route::post('/devices/{deviceId}/sync-logs', [FingerprintDeviceApiController::class, 'syncLogs'])->whereNumber('deviceId');
+    Route::post('/devices/{deviceId}/snapshot', [FingerprintDeviceApiController::class, 'saveSnapshot'])->whereNumber('deviceId');
+    Route::get('/devices/{deviceId}/snapshot', [FingerprintDeviceApiController::class, 'getSnapshot'])->whereNumber('deviceId');
 });
 
 // Fallback login route for unauthenticated API requests
