@@ -15,10 +15,25 @@ use Illuminate\Support\Facades\Log;
 class FingerprintDeviceApiController extends Controller
 {
     /**
-     * List all registered devices / areas.
+     * List all registered devices / areas (auto-seeds defaults if empty).
      */
     public function devices(Request $request): JsonResponse
     {
+        // Auto-seed area default jika tabel masih kosong di server live
+        if (FingerprintDevice::count() === 0) {
+            $defaultAreas = [
+                ['code' => 'SMD', 'name' => 'Mesin & Area SMD', 'location' => 'SMD'],
+                ['code' => 'SMC', 'name' => 'Mesin & Area SMC', 'location' => 'SMC'],
+                ['code' => 'PAKU', 'name' => 'Mesin & Area PAKU', 'location' => 'PAKU'],
+                ['code' => 'OVERBURDEN', 'name' => 'Mesin & Area OVERBURDEN', 'location' => 'OVERBURDEN'],
+                ['code' => 'WORKSHOP', 'name' => 'Mesin & Area WORKSHOP', 'location' => 'WORKSHOP'],
+            ];
+
+            foreach ($defaultAreas as $d) {
+                FingerprintDevice::firstOrCreate(['code' => $d['code']], $d);
+            }
+        }
+
         $devices = FingerprintDevice::with(['assignedUser:id,name,username'])
             ->withCount(['mappings', 'logs'])
             ->where('is_active', true)
